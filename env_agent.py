@@ -27,7 +27,7 @@ I have checked out a GitHub repository to $REPO. I want you to try to create a
 container that builds the code in the repository and runs the test suite when I
 run it as follows:
 
-    podman run --rm --network none -v $REPO:rw $CONTAINER
+    podman run --rm --network none -v $REPO:/repo:rw $CONTAINER
 
 Create a Dockerfile in the repository directory. You must not copy the
 repository into the container, because I may modify the code on the host later
