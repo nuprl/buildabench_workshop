@@ -16,11 +16,12 @@ files, and has limited access to GitHub.
 """
 
 import argparse
-import subprocess
 import sys
-from pathlib import Path
 import json
-from contextlib import suppress
+from pathlib import Path
+
+from agentlib import env_subst, container_exists, run_claude_command, standard_container_name
+from repolib import tarball_or_repo
 
 REPO_INSTALL_PROMPT = """
 I have checked out a GitHub repository to $REPO. I want you to try to create a
@@ -64,48 +65,33 @@ were able to build and run the container.
 """.strip()
 
 
-def env_subst(template_str, **kwargs):
-    """
-    Replace $VAR in a string with the value of the VAR environment variable.
-    """
-    for key, value in kwargs.items():
-        template_str = template_str.replace(f"${key}", str(value))
-    return template_str
+def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path, container: str) -> dict:
+    """Collect tips file, Dockerfile, and log file."""
+    dockerfile_path = repo_dir / "Dockerfile"
+    return {
+        "docker_image_name": container,
+        "tips": tips_path.read_text(encoding="utf-8", errors="replace"),
+        "dockerfile": dockerfile_path.read_text(encoding="utf-8", errors="replace"),
+        "log": log_file.read_text(encoding="utf-8", errors="replace"),
+    }
 
 
-def container_exists(container: str) -> bool:
-    try:
-        subprocess.check_output(["podman", "image", "exists", container])
-        return True
-    except subprocess.CalledProcessError:
-        return False
-
-
-def print_if_assistant_message(message_str: str):
-    try:
-        message = json.loads(message_str)
-    except json.JSONDecodeError:
-        print(f"Count not parse message as JSON: {message_str}")
-        return
-
-    if message["type"] != "assistant":
-        return
-
-    with suppress(KeyError):
-        if message["message"]["content"][0]["type"] != "text":
-            return
-        print(message["message"]["content"][0]["text"])
-
-
-def main_with_args(repo: Path, container, tips_path: Path):
-    repo = repo.absolute()
+def main_with_args(repo: Path, container, tips_path: Path, output_json: bool = False):
+    repo_path = repo.absolute()
     tips_path = tips_path.absolute()
 
     if not container:
-        container = repo.name
+        # Use the original repo path name for container, even if it's a tarball
+        if repo_path.is_file():
+            # For tarballs, combine parent directory name and stem
+            name = f"{repo_path.parent.name}#{repo_path.stem}"
+        else:
+            name = repo_path.name
+        # Normalize the container name using the helper function
+        container = standard_container_name(Path(name))
 
-    if not repo.exists():
-        print(f"Error: Repository directory {repo} does not exist", file=sys.stderr)
+    if not repo_path.exists():
+        print(f"Error: Repository path {repo_path} does not exist", file=sys.stderr)
         return 1
 
     if not tips_path.exists():
@@ -119,60 +105,56 @@ def main_with_args(repo: Path, container, tips_path: Path):
         print(f"Error: Container {container} already exists", file=sys.stderr)
         return 1
 
-    prompt = env_subst(
-        REPO_INSTALL_PROMPT, REPO=repo, CONTAINER=container, TIPS_PATH=tips_path
-    )
-
-    # Build claude command
-    log_file = repo / "env_agent_log.jsonl"
-    claude_cmd = [
-        "claude",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--tools",
-        "Bash,Edit,Read,Write,WebSearch",
-        "--add-dir",
-        repo,
-        "--permission-mode",
-        "acceptEdits",
-        "--allowedTools",
-        f"Bash(podman run --rm --network none -v {repo}:/repo:rw {container})",
-        # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
-        # internal timeout ability.
-        "--allowedTools",
-        f"Bash(timeout 300 podman run --rm --network none -v {repo}:/repo:rw {container})",
-        "--allowedTools",
-        f"Bash(podman build -t {container}:*)",
-        "--allowedTools",
-        "Bash(jobs:*)",
-        "--allowedTools",
-        "Bash(podman images:*)",
-        "--allowedTools",
-        f"Edit({tips_path})",
-        "--allowedTools",
-        "WebSearch(*)",
-        "--print",
-        prompt,
-    ]
-
-    # Run claude command and tee output to both stdout and log file
-    with open(log_file, "w") as log_f:
-        process = subprocess.Popen(
-            claude_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,  # Line buffered
+    # Use tarball_or_repo to handle both tarballs and directories
+    with tarball_or_repo(repo_path) as repo_dir:
+        repo_dir = repo_dir.absolute()
+        
+        prompt = env_subst(
+            REPO_INSTALL_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path
         )
 
-        for line in process.stdout:
-            print_if_assistant_message(line)
-            log_f.write(line)
-            log_f.flush()
+        # Build claude command
+        log_file = repo_dir / "env_agent_log.jsonl"
+        claude_cmd = [
+            "claude",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--tools",
+            "Bash,Edit,Read,Write,WebSearch",
+            "--add-dir",
+            str(repo_dir),
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            f"Bash(podman run --rm --network none -v {repo_dir}:/repo:rw {container})",
+            # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
+            # internal timeout ability.
+            "--allowedTools",
+            f"Bash(timeout 300 podman run --rm --network none -v {repo_dir}:/repo:rw {container})",
+            "--allowedTools",
+            f"Bash(podman build -t {container}:*)",
+            "--allowedTools",
+            "Bash(jobs:*)",
+            "--allowedTools",
+            "Bash(podman images:*)",
+            "--allowedTools",
+            f"Edit({tips_path})",
+            "--allowedTools",
+            "WebSearch(*)",
+            "--print",
+            prompt,
+        ]
 
-        process.wait()
-        return process.returncode
+        # Run claude command and tee output to both stdout and log file
+        return_code = run_claude_command(claude_cmd, log_file, silent=output_json)
+        
+        # If output_json mode, collect and print artifacts
+        if output_json:
+            artifacts = collect_output_artifacts(repo_dir, log_file, tips_path, container)
+            print(json.dumps(artifacts))
+        
+        return return_code
 
 
 def main():
@@ -180,6 +162,7 @@ def main():
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--container", type=str)
     parser.add_argument("--tips-path", type=Path, required=True)
+    parser.add_argument("--output-json", action="store_true", help="Output JSON with all created files")
     args = parser.parse_args()
     main_with_args(**vars(args))
 

@@ -5,28 +5,35 @@ to use a different CLI agent, such as Codex or Cursor. It can definitely be
 adapted to support Docker instead of Podman. It has no Python dependencies and
 should work with fairly old versions of Python 3.
 
-At this point, you should read the AGENT_PROMPT below to understand what
-this script does.
+At this point, you should read the AGENT_PROMPT below to understand what this
+script does.
 
 The only additional features of this script that are not described in the prompt
-are that it saves the interaction log to env_agent_log.jsonl in the repository
-directory and that it carefully scopes the allowed tools. Nevertheless,I run
-this script in an unprivileged user account that does not have my personal
-files, and has limited access to GitHub.
+are that it saves the interaction log in the repository directory and that it
+carefully scopes the allowed tools. Nevertheless,I run this script in an
+unprivileged user account that does not have my personal files, and has limited
+access to GitHub.
 """
 
 import argparse
-import subprocess
 import sys
-from pathlib import Path
 import json
-from contextlib import suppress
+import subprocess
+from pathlib import Path
+
+from agentlib import env_subst, container_exists, run_claude_command, standard_container_name
+from repolib import tarball_or_repo
 
 AGENT_PROMPT = """
 I have checked out a GitHub repository to $REPO. I want you to remove the
 following feature from the codebase and verify that you have done so correctly:
 
 $FEATURE
+
+I think the feature is implemented in the following locations, but you should
+explore the codebase yourself:
+
+$LOCATIONS
 
 I suggest proceeding in the following steps:
 
@@ -48,61 +55,61 @@ I suggest proceeding in the following steps:
    verify that the feature tests now fail.
 
 If a step goes wrong, you should try to fix the problem and re-execute. But, do
-not run the test suite more than six times total.
+not run the test suite more than six times total. If you determine that the
+feature cannot be removed without breaking other dependent feature that are
+key, you should abort the task and explain why.
 
-If you succeed, write "the feature has been removed" in your final response.
+If you succeed at the task, conclude as follows:
 
-The file $TIPS_PATH has tips from previous runs on other repositories that may
-be helpful. When you are done, revisit this tips file and, if needed, update it
-with new tips or modify existing tips.
+1. Write "the feature has been removed" in your final response.
+
+2. Commit the code changes to the repository.
+
+3. Use "git diff" to create two diff files in the repository root called
+   "src.diff" and "test.diff". These should contain the changes to the source
+   code and test code, respectively.
+
+Finally, the file $TIPS_PATH has tips from previous runs on other repositories
+that  may be helpful. When you are done, revisit this tips file and, if needed,
+update it with new tips or modify existing tips.
+
+
+
 """.strip()
 
 
-def env_subst(template_str, **kwargs):
-    """
-    Replace $VAR in a string with the value of the VAR environment variable.
-    """
-    for key, value in kwargs.items():
-        template_str = template_str.replace(f"${key}", str(value))
-    return template_str
-
-
-def container_exists(container: str) -> bool:
+def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) -> dict:
+    """Collect tips file, log file, src.diff, test.diff, and commit message."""
+    commit_message = ""
     try:
-        subprocess.check_output(["podman", "image", "exists", container])
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%B"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commit_message = result.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    
+    return {
+        "tips": tips_path.read_text(encoding="utf-8", errors="replace"),
+        "log": log_file.read_text(encoding="utf-8", errors="replace"),
+        "src.diff": (repo_dir / "src.diff").read_text(encoding="utf-8", errors="replace"),
+        "test.diff": (repo_dir / "test.diff").read_text(encoding="utf-8", errors="replace"),
+        "commit_message": commit_message,
+    }
 
-
-def print_if_assistant_message(message_str: str):
-    try:
-        message = json.loads(message_str)
-    except json.JSONDecodeError:
-        print(f"Count not parse message as JSON: {message_str}")
-        return
-
-    if message["type"] != "assistant":
-        return
-
-    with suppress(KeyError):
-        if message["message"]["content"][0]["type"] != "text":
-            return
-        print(message["message"]["content"][0]["text"])
-
-
-def standard_container_name(repo: Path) -> str:
-    return repo.name.lower().replace("#", "__")
-
-def main_with_args(repo: Path, container, tips_path: Path, feature: str):
-    repo = repo.absolute()
+def main_with_args(repo: Path, container, tips_path: Path, feature: str, locations: str, output_json: bool = False):
+    repo_path = repo.absolute()
     tips_path = tips_path.absolute()
 
     if not container:
-        container = standard_container_name(repo)
+        container = standard_container_name(repo_path)
 
-    if not repo.exists():
-        print(f"Error: Repository directory {repo} does not exist", file=sys.stderr)
+    if not repo_path.exists():
+        print(f"Error: Repository path {repo_path} does not exist", file=sys.stderr)
         return 1
 
     if not tips_path.exists():
@@ -116,60 +123,63 @@ def main_with_args(repo: Path, container, tips_path: Path, feature: str):
         print(f"Error: Container {container} does not exist", file=sys.stderr)
         return 1
 
-    prompt = env_subst(
-        AGENT_PROMPT, REPO=repo, CONTAINER=container, TIPS_PATH=tips_path, FEATURE=feature
-    )
-
-    log_file = repo / "feature_removal_agent_log.jsonl"
-    claude_cmd = [
-        "claude",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--tools",
-        "Bash,Edit,Read,Write,WebSearch",
-        "--add-dir",
-        repo,
-        "--permission-mode",
-        "acceptEdits",
-        "--allowedTools",
-        f"Bash(podman run --rm --network none -v \"{repo}:/repo:rw\" {container})",
-        # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
-        # internal timeout ability.
-        "--allowedTools",
-        f"Bash(timeout 300 podman run --rm --network none -v \"{repo}:/repo:rw\" {container})",
-        "--allowedTools",
-        f"Bash(podman build -t {container}:*)",
-        "--allowedTools",
-        "Bash(jobs:*)",
-        "--allowedTools",
-        "Bash(podman images:*)",
-        "--allowedTools",
-        f"Edit({tips_path})",
-        "--allowedTools",
-        "WebSearch(*)",
-        "--print",
-        prompt,
-    ]
-
-
-    # Run claude command and tee output to both stdout and log file
-    with open(log_file, "w") as log_f:
-        process = subprocess.Popen(
-            claude_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,  # Line buffered
+    # Use tarball_or_repo to handle both tarballs and directories
+    with tarball_or_repo(repo_path) as repo_dir:
+        repo_dir = repo_dir.absolute()
+        
+        prompt = env_subst(
+            AGENT_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path, FEATURE=feature, LOCATIONS=locations
         )
 
-        for line in process.stdout:
-            print_if_assistant_message(line)
-            log_f.write(line)
-            log_f.flush()
+        log_file = repo_dir / "feature_removal_agent_log.jsonl"
+        claude_cmd = [
+            "claude",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--tools",
+            "Bash,Edit,Read,Write,WebSearch",
+            "--add-dir",
+            str(repo_dir),
+            "--permission-mode",
+            "acceptEdits",
+            "--allowedTools",
+            f"Bash(podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container})",
+            # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
+            # internal timeout ability.
+            "--allowedTools",
+            f"Bash(timeout 300 podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container})",
+            "--allowedTools",
+            f"Bash(podman build -t {container}:*)",
+            "--allowedTools",
+            "Bash(jobs:*)",
+            "--allowedTools",
+            "Bash(podman images:*)",
+            "--allowedTools",
+            "Bash(git diff:*)",
+            "--allowedTools",
+            "Bash(git commit:*)",
+            "--allowedTools",
+            "Bash(git add:*)",
+            "--allowedTools",
+            "Bash(git status)",
+            "--allowedTools",
+            f"Edit({tips_path})",
+            "--allowedTools",
+            "WebSearch(*)",
+            "--print",
+            prompt,
+        ]
 
-        process.wait()
-        return process.returncode
+        # Run claude command and tee output to both stdout and log file
+        return_code = run_claude_command(claude_cmd, log_file, silent=output_json)
+        
+        # If output_json mode, collect and print artifacts
+        if output_json:
+            artifacts = collect_output_artifacts(repo_dir, log_file, tips_path)
+            print(json.dumps(artifacts))
+        
+        return return_code
 
 
 def main():
@@ -178,6 +188,8 @@ def main():
     parser.add_argument("--container", type=str)
     parser.add_argument("--tips-path", type=Path, required=True)
     parser.add_argument("--feature", type=str, required=True)
+    parser.add_argument("--locations", type=str, required=True)
+    parser.add_argument("--output-json", action="store_true", help="Output JSON with all created files")
     args = parser.parse_args()
     main_with_args(**vars(args))
 

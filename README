@@ -1,0 +1,11 @@
+Candidates:
+
+```
+find /hdd/datasets/julia/all_jl_repos -name "*.tar" | \
+  parallel --progress --bar python3 filter_repos.py {} | \
+  jq -r 'select(.valid == true) | .path' > candidate_envs.txt
+```
+
+This produces 8,800 repositories.
+
+shuf candidate_envs.txt | head -n100 > sample_candidate_envs.txt
