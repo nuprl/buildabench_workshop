@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-This script requires Claude Code and Podman.  It can probably be easily adapted
-to use a different CLI agent, such as Codex or Cursor. It can definitely be
-adapted to support Docker instead of Podman. It has no Python dependencies and
-should work with fairly old versions of Python 3.
+This script requires a CLI agent (Claude Code, Codex, etc.) and Podman. It can
+definitely be adapted to support Docker instead of Podman. It has no Python
+dependencies and should work with fairly old versions of Python 3.
 
 At this point, you should read the REPO_INSTALL_PROMPT below to understand what
 this script does.
@@ -20,8 +19,9 @@ import sys
 import json
 from pathlib import Path
 
-from agentlib import env_subst, container_exists, run_claude_command, standard_container_name
+from agentlib import env_subst, container_exists, standard_container_name
 from repolib import tarball_or_repo
+from .anyagent import agent
 
 REPO_INSTALL_PROMPT = """
 I have checked out a GitHub repository to $REPO. I want you to try to create a
@@ -76,7 +76,7 @@ def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path, co
     }
 
 
-def main_with_args(repo: Path, container, tips_path: Path, output_json: bool = False):
+def main_with_args(repo: Path, container, tips_path: Path, agent_name: str, output_json: bool):
     repo_path = repo.absolute()
     tips_path = tips_path.absolute()
 
@@ -113,41 +113,32 @@ def main_with_args(repo: Path, container, tips_path: Path, output_json: bool = F
             REPO_INSTALL_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path
         )
 
-        # Build claude command
-        log_file = repo_dir / "env_agent_log.jsonl"
-        claude_cmd = [
-            "claude",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--tools",
-            "Bash,Edit,Read,Write,WebSearch",
-            "--add-dir",
-            str(repo_dir),
-            "--permission-mode",
-            "acceptEdits",
-            "--allowedTools",
-            f"Bash(podman run --rm --network none -v {repo_dir}:/repo:rw {container})",
-            # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
+        # Create agent instance
+        agent_instance = agent(agent_name)
+        agent_instance.prompt(prompt)
+        agent_instance.cwd(repo_dir)
+        agent_instance.add_dir(repo_dir)
+        
+        # Allow specific bash commands
+        agent_instance.allow_bash_patterns(
+            f"podman run --rm --network none -v {repo_dir}:/repo:rw {container}",
+            # Some agents interpret the timeout to use the Bash timeout command, and at other times use their
             # internal timeout ability.
-            "--allowedTools",
-            f"Bash(timeout 300 podman run --rm --network none -v {repo_dir}:/repo:rw {container})",
-            "--allowedTools",
-            f"Bash(podman build -t {container}:*)",
-            "--allowedTools",
-            "Bash(jobs:*)",
-            "--allowedTools",
-            "Bash(podman images:*)",
-            "--allowedTools",
-            f"Edit({tips_path})",
-            "--allowedTools",
-            "WebSearch(*)",
-            "--print",
-            prompt,
-        ]
+            f"timeout 300 podman run --rm --network none -v {repo_dir}:/repo:rw {container}",
+            f"podman build -t {container}:*",
+            "jobs:*",
+            "podman images:*",
+        )
+        
+        # Allow editing the tips file
+        agent_instance.allow_file(tips_path)
+        
+        # Allow web search
+        agent_instance.allow_web_search()
 
-        # Run claude command and tee output to both stdout and log file
-        return_code = run_claude_command(claude_cmd, log_file, silent=output_json)
+        # Run agent and log output
+        log_file = repo_dir / "env_agent_log.jsonl"
+        return_code = agent_instance.run(log_file=log_file, silent=output_json)
         
         # If output_json mode, collect and print artifacts
         if output_json:
@@ -162,6 +153,7 @@ def main():
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--container", type=str)
     parser.add_argument("--tips-path", type=Path, required=True)
+    parser.add_argument("--agent", type=str, default="claude", dest="agent_name", help="Agent to use (default: claude)")
     parser.add_argument("--output-json", action="store_true", help="Output JSON with all created files")
     args = parser.parse_args()
     main_with_args(**vars(args))

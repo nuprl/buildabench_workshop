@@ -49,3 +49,14 @@ uv run extract_candidates.py \
   --parquet-file /hdd/datasets/julia/filter_commits_noexec.parquet \
   --root /hdd/datasets/julia/filter_commits_exec
 ```
+
+At this point, I stopped, because there are only 153 candidates for
+execution-based filtering:
+
+```bash
+$ ls /hdd/datasets/julia/filter_commits_exec | wc -l
+153
+```
+
+We are very likely to get a lot of failures at the execution-filtering step,
+so this won't work.
