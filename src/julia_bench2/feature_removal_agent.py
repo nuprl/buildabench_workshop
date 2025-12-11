@@ -96,9 +96,17 @@ Ignore it and leave it untracked.
 """.strip()
 
 
+def may_read(file_path: Path) -> str | None:
+    """Read a file if it exists, returning None on any error."""
+    try:
+        return file_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+
 def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) -> dict:
     """Collect tips file, log file, src.diff, tests.diff, and commit message."""
-    commit_message = ""
+    commit_message = None
     try:
         result = subprocess.run(
             ["git", "log", "-1", "--format=%B"],
@@ -112,14 +120,14 @@ def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) ->
         pass
     
     return {
-        "tips": tips_path.read_text(encoding="utf-8", errors="replace"),
-        "log": log_file.read_text(encoding="utf-8", errors="replace"),
-        "src.diff": (repo_dir / "src.diff").read_text(encoding="utf-8", errors="replace"),
-        "tests.diff": (repo_dir / "tests.diff").read_text(encoding="utf-8", errors="replace"),
+        "tips": may_read(tips_path),
+        "log": may_read(log_file),
+        "src.diff": may_read(repo_dir / "src.diff"),
+        "tests.diff": may_read(repo_dir / "tests.diff"),
         "commit_message": commit_message,
     }
 
-def main_with_args(repo: Path, container, tips_path: Path, task_description: str, patches: str, agent_name: str, output_json: bool = False):
+def main_with_args(repo: Path, container, tips_path: Path, task_description: str, patches: str, agent_name: str, task_id: str, output_json: bool = False):
     repo_path = repo.absolute()
     tips_path = tips_path.absolute()
 
@@ -174,6 +182,7 @@ def main_with_args(repo: Path, container, tips_path: Path, task_description: str
         
         if output_json:
             artifacts = collect_output_artifacts(repo_dir, log_file, tips_path)
+            artifacts["task_id"] = task_id
             print(json.dumps(artifacts))
         
         return return_code
@@ -189,9 +198,12 @@ def main():
     parser.add_argument("--input-json", action="store_true", help="Read task-description and patches from JSONL on stdin")
     parser.add_argument("--agent", type=str, required=True, help="Agent name (e.g., 'claude' or 'codex')", dest="agent_name")
     parser.add_argument("--output-json", action="store_true", help="Output JSON with all created files")
+    parser.add_argument("--task-id", type=str, help="Task ID to include in output JSON (required unless --input-json provides it)")
     args = parser.parse_args()
     
 
+    task_id = args.task_id
+    
     if args.input_json:
         # Read JSONL line from stdin
         line = sys.stdin.readline()
@@ -205,6 +217,12 @@ def main():
             if not task_description or not patches:
                 print("Error: JSON must contain 'task_description' and 'patches' fields", file=sys.stderr)
                 return 1
+            # Extract task_id from JSON (command-line flag takes precedence)
+            if task_id is None:
+                task_id = data.get("task_id")
+            if not task_id:
+                print("Error: task_id must be provided via --task-id flag or 'task_id' field in input JSON", file=sys.stderr)
+                return 1
         except json.JSONDecodeError as e:
             print(f"Error: Failed to parse JSON from stdin: {e}", file=sys.stderr)
             return 1
@@ -212,6 +230,9 @@ def main():
         # Read task description and patches from files
         if not args.task_description_file or not args.patches_file:
             print("Error: --task-description and --patches are required unless --input-json is used", file=sys.stderr)
+            return 1
+        if not task_id:
+            print("Error: --task-id is required when not using --input-json", file=sys.stderr)
             return 1
         task_description = args.task_description_file.read_text(encoding="utf-8")
         patches = args.patches_file.read_text(encoding="utf-8")
@@ -224,7 +245,8 @@ def main():
         task_description=task_description,
         patches=patches,
         agent_name=args.agent_name,
-        output_json=args.output_json
+        output_json=args.output_json,
+        task_id=task_id
     )
 
 

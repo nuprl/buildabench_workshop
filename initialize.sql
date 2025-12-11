@@ -15,3 +15,11 @@ CREATE TABLE removed_features (
     test_diff TEXT NOT NULL,
     PRIMARY KEY (repo_id, commit_sha, topic)
 );
+
+CREATE TABLE discovered_features (
+    repo_id TEXT NOT NULL,
+    commit_sha TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    location TEXT NOT NULL,
+    PRIMARY KEY (repo_id, commit_sha, topic)
+);
