@@ -9,17 +9,18 @@ import shutil
 import subprocess
 from contextlib import contextmanager
 import tempfile
+from typing import Optional
 
 
 def extract_bare_repo(tar_file_path: Path, tmp_path: Path) -> Path:
     """
-    Extract a tarball containing a bare git repository to a temporary directory.
-    Returns the path to the extracted bare repository directory.
+    Extract a tarball containing a git repository (bare or regular) to a temporary directory.
+    Returns the path to the extracted repository directory.
     """
     with tarfile.open(tar_file_path, "r") as tar:
         tar.extractall(path=tmp_path)
     
-    # The tarball should contain a single directory (the bare git repo)
+    # The tarball should contain a single directory (the git repo)
     extracted_items = list(tmp_path.iterdir())
     if len(extracted_items) != 1:
         raise ValueError(
@@ -31,14 +32,20 @@ def extract_bare_repo(tar_file_path: Path, tmp_path: Path) -> Path:
             f"Expected directory in {tmp_path}, got {extracted_items[0]}"
         )
     
-    bare_repo_dir = extracted_items[0]
+    repo_dir = extracted_items[0]
     
-    if not (bare_repo_dir / "HEAD").exists() or not (bare_repo_dir / "objects").exists():
+    # Check if it's a bare repository (has HEAD and objects at root)
+    is_bare = (repo_dir / "HEAD").exists() and (repo_dir / "objects").exists()
+    
+    # Check if it's a regular repository (has .git directory)
+    is_regular = (repo_dir / ".git").exists() and (repo_dir / ".git" / "HEAD").exists()
+    
+    if not is_bare and not is_regular:
         raise ValueError(
-            f"Extracted directory {bare_repo_dir} does not appear to be a valid git repository"
+            f"Extracted directory {repo_dir} does not appear to be a valid git repository"
         )
     
-    return bare_repo_dir
+    return repo_dir
 
 
 def clone_bare_repo_to_working_tree(bare_repo_dir: Path, working_tree_dir: Path) -> None:
@@ -89,6 +96,31 @@ def extracted_tarballed_repo(tarball: Path):
         clone_bare_repo_to_working_tree(bare_repo_dir, working_tree_dir)
         
         yield working_tree_dir
+
+
+def get_commit_sha(repo_dir: Path) -> Optional[str]:
+    """
+    Get the commit SHA of HEAD for a git repository.
+    
+    Args:
+        repo_dir: Path to the git repository directory
+    
+    Returns:
+        The commit SHA as a string, or None if git is not available or the directory is not a git repo
+    """
+    commit_sha = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commit_sha = result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # If git is not available or not a git repo, commit_sha will be None
+        pass
+    return commit_sha
 
 
 @contextmanager

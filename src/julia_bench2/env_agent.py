@@ -19,8 +19,8 @@ import sys
 import json
 from pathlib import Path
 
-from agentlib import env_subst, container_exists, standard_container_name
-from repolib import tarball_or_repo
+from .agentlib import env_subst, container_exists, standard_container_name
+from .repolib import tarball_or_repo
 from .anyagent import agent
 
 REPO_INSTALL_PROMPT = """

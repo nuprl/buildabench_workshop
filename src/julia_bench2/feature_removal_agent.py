@@ -1,18 +1,8 @@
-#!/usr/bin/env python3
 """
-This script requires Claude Code and Podman.  It can probably be easily adapted
-to use a different CLI agent, such as Codex or Cursor. It can definitely be
-adapted to support Docker instead of Podman. It has no Python dependencies and
-should work with fairly old versions of Python 3.
-
-At this point, you should read the AGENT_PROMPT below to understand what this
-script does.
+You should read the AGENT_PROMPT below to understand what this script does.
 
 The only additional features of this script that are not described in the prompt
-are that it saves the interaction log in the repository directory and that it
-carefully scopes the allowed tools. Nevertheless,I run this script in an
-unprivileged user account that does not have my personal files, and has limited
-access to GitHub.
+are that it can save the output artifacts (tests, Dockerfile, etc.).
 """
 
 import argparse
@@ -21,65 +11,93 @@ import json
 import subprocess
 from pathlib import Path
 
-from agentlib import env_subst, container_exists, run_claude_command, standard_container_name
-from repolib import tarball_or_repo
+from .agentlib import env_subst, container_exists, standard_container_name
+from .repolib import tarball_or_repo
+from .anyagent import agent
 
 AGENT_PROMPT = """
-I have checked out a GitHub repository to $REPO. I want you to remove the
-following feature from the codebase and verify that you have done so correctly:
+I need to interview a candidate software engineer. During the interview,
+I want to test their programming ability by asking them to re-implement a
+feature that already exists in the project.
 
-$FEATURE
+These are instructions that I will give the candidate:
 
-I think the feature is implemented in the following locations, but you should
-explore the codebase yourself:
+<INSTRUCTIONS>
+$TASK_DESCRIPTION
+</INSTRUCTIONS>
 
-$LOCATIONS
+Here is how I think the feature should be removed:
 
-I suggest proceeding in the following steps:
+<CHANGES>
+$PATCHES
+</CHANGES>
 
-1. I have prepared a container that you can use to run the tests called $CONTAINER.
-   Confirm that you can find it with "podman images".
+I may not have comprehensively described everything you need to change, so
+explore the codebase yourself.
 
-2. Read the code to understand how the feature is implemented, and then read the
-   test suite and determine if there are any tests that already test for the
-   feature. If no such tests exist, write new tests for the feature.
+I have step-by-step instructions for you to follow. If you make a mistake, you
+may backtrack. However, you must not re-run the test suite more than six times
+total.
 
-3. Run the test suite, which you must do in the container with exactly this command:
+Here are the steps you should follow:
 
-    podman run --rm --network none -v "$REPO:/repo:rw" $CONTAINER
+1. I have prepared a container that you can use to run the tests called
+   $CONTAINER. Confirm that you can find it with "podman images" and give up
+   immediately if you cannot find it.
 
-4. Some existing tests may fail, but the tests for the target feature should
-   pass.
+2. Read the code to understand how the feature is implemented. My instructions
+   on how to remove the feature should help you do this, but I may have missed
+   some details.
 
-5. Remove the feature from the codebase. Make no changes to the tests, and
-   verify that the feature tests now fail.
+3. Read the test suite and determine if there are any tests that already test for
+   the feature. If no such tests exist, write new tests for the feature.
 
-If a step goes wrong, you should try to fix the problem and re-execute. But, do
-not run the test suite more than six times total. If you determine that the
-feature cannot be removed without breaking other dependent feature that are
-key, you should abort the task and explain why.
+4. Run the test suite, which you must do in the container with exactly this
+   command:
 
-If you succeed at the task, conclude as follows:
+   podman run --rm --network none -v "$REPO:/repo:rw" $CONTAINER
 
-1. Write "the feature has been removed" in your final response.
+   Some existing tests may fail, but the tests for the target feature should
+   pass.  In addition, remove any other tests that fail so that all tests pass
+   at this point. You must not proceed unless all tests pass at this point. If
+   you cannot do this, give up and explain what went wrong.
 
-2. Commit the code changes to the repository.
+5. If you changed the tests in the previous step, commit them to the repository
+   now.
 
-3. Use "git diff" to create two diff files in the repository root called
-   "src.diff" and "test.diff". These should contain the changes to the source
-   code and test code, respectively.
+6. Remove the feature from the codebase without making any changes to the tests.
+   I have provided the changes that I think you need to make, but you should
+   adapt them as needed. Ensure that you do not leave any trace of the
+   feature you remove, and do not add comments saying that you removed code.
 
-Finally, the file $TIPS_PATH has tips from previous runs on other repositories
-that  may be helpful. When you are done, revisit this tips file and, if needed,
-update it with new tips or modify existing tips.
+7. Verify that the tests (old or new) that target the feature now fail. At
+   least one test case that targets the feature should fail. If you cannot do
+   this, give up and explain what went wrong. If you succeed, commit the
+   code changes to the repository.
 
+8. Remove all tests cases that target the feature and fail in the previous step.
+   Run the test suite to verify that all tests pass. If you cannot do this,
+   give up and explain what went wrong. If you succeed, commit the code changes
+   to the repository.
 
+9. Create two untracked diff files in the repository root: The file src.diff
+   should be a diff between the original repository state, and the current state
+   of the repository (i.e., from step 8). The file tests.diff should be a diff
+   that only adds the tests that target the feature to the current state of the
+   repository. That is, after the candidate implements the feature in their own
+   way, I will apply tests.diff to introduce the tests that target the feature.
 
+The file $TIPS_PATH has tips from previous runs on other repositories that  may
+be helpful. When you are done, revisit this tips file and, if needed, update it
+with new tips or modify existing tips, but ensure the tips are generic.
+
+When you use diff, you may notice a file called feature_removal_agent_log.jsonl.
+Ignore it and leave it untracked.
 """.strip()
 
 
 def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) -> dict:
-    """Collect tips file, log file, src.diff, test.diff, and commit message."""
+    """Collect tips file, log file, src.diff, tests.diff, and commit message."""
     commit_message = ""
     try:
         result = subprocess.run(
@@ -97,11 +115,11 @@ def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) ->
         "tips": tips_path.read_text(encoding="utf-8", errors="replace"),
         "log": log_file.read_text(encoding="utf-8", errors="replace"),
         "src.diff": (repo_dir / "src.diff").read_text(encoding="utf-8", errors="replace"),
-        "test.diff": (repo_dir / "test.diff").read_text(encoding="utf-8", errors="replace"),
+        "tests.diff": (repo_dir / "tests.diff").read_text(encoding="utf-8", errors="replace"),
         "commit_message": commit_message,
     }
 
-def main_with_args(repo: Path, container, tips_path: Path, feature: str, locations: str, output_json: bool = False):
+def main_with_args(repo: Path, container, tips_path: Path, task_description: str, patches: str, agent_name: str, output_json: bool = False):
     repo_path = repo.absolute()
     tips_path = tips_path.absolute()
 
@@ -123,58 +141,37 @@ def main_with_args(repo: Path, container, tips_path: Path, feature: str, locatio
         print(f"Error: Container {container} does not exist", file=sys.stderr)
         return 1
 
-    # Use tarball_or_repo to handle both tarballs and directories
     with tarball_or_repo(repo_path) as repo_dir:
         repo_dir = repo_dir.absolute()
         
         prompt = env_subst(
-            AGENT_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path, FEATURE=feature, LOCATIONS=locations
+            AGENT_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path, TASK_DESCRIPTION=task_description, PATCHES=patches
         )
 
         log_file = repo_dir / "feature_removal_agent_log.jsonl"
-        claude_cmd = [
-            "claude",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--tools",
-            "Bash,Edit,Read,Write,WebSearch",
-            "--add-dir",
-            str(repo_dir),
-            "--permission-mode",
-            "acceptEdits",
-            "--allowedTools",
-            f"Bash(podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container})",
+        
+        agent_instance = agent(agent_name)
+        agent_instance.prompt(prompt)
+        agent_instance.cwd(repo_dir)
+        agent_instance.allow_web_search()
+        agent_instance.allow_bash_patterns(
+            f"podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container}",
             # Claude Code sometimes interprets the timeout to use the Bash timeout command, and at other times uses its
             # internal timeout ability.
-            "--allowedTools",
-            f"Bash(timeout 300 podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container})",
-            "--allowedTools",
-            f"Bash(podman build -t {container}:*)",
-            "--allowedTools",
-            "Bash(jobs:*)",
-            "--allowedTools",
-            "Bash(podman images:*)",
-            "--allowedTools",
-            "Bash(git diff:*)",
-            "--allowedTools",
-            "Bash(git commit:*)",
-            "--allowedTools",
-            "Bash(git add:*)",
-            "--allowedTools",
-            "Bash(git status)",
-            "--allowedTools",
-            f"Edit({tips_path})",
-            "--allowedTools",
-            "WebSearch(*)",
-            "--print",
-            prompt,
-        ]
-
-        # Run claude command and tee output to both stdout and log file
-        return_code = run_claude_command(claude_cmd, log_file, silent=output_json)
+            f"timeout 300 podman run --rm --network none -v \"{repo_dir}:/repo:rw\" {container}",
+            f"podman build -t {container}:*",
+            "jobs:*",
+            "podman images:*",
+            "git diff:*",
+            "git commit:*",
+            "git add:*",
+            "git status",
+        )
+        agent_instance.allow_file(tips_path)
+        agent_instance.cwd(repo_dir)
         
-        # If output_json mode, collect and print artifacts
+        return_code = agent_instance.run(log_file=log_file, silent=output_json)
+        
         if output_json:
             artifacts = collect_output_artifacts(repo_dir, log_file, tips_path)
             print(json.dumps(artifacts))
@@ -187,11 +184,48 @@ def main():
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--container", type=str)
     parser.add_argument("--tips-path", type=Path, required=True)
-    parser.add_argument("--feature", type=str, required=True)
-    parser.add_argument("--locations", type=str, required=True)
+    parser.add_argument("--task-description", type=Path, dest="task_description_file", help="File containing task description (required unless --input-json)")
+    parser.add_argument("--patches", type=Path, dest="patches_file", help="File containing patches (required unless --input-json)")
+    parser.add_argument("--input-json", action="store_true", help="Read task-description and patches from JSONL on stdin")
+    parser.add_argument("--agent", type=str, required=True, help="Agent name (e.g., 'claude' or 'codex')", dest="agent_name")
     parser.add_argument("--output-json", action="store_true", help="Output JSON with all created files")
     args = parser.parse_args()
-    main_with_args(**vars(args))
+    
+
+    if args.input_json:
+        # Read JSONL line from stdin
+        line = sys.stdin.readline()
+        if not line:
+            print("Error: No input provided on stdin", file=sys.stderr)
+            return 1
+        try:
+            data = json.loads(line.strip())
+            task_description = data.get("task_description", "")
+            patches = data.get("patches", "")
+            if not task_description or not patches:
+                print("Error: JSON must contain 'task_description' and 'patches' fields", file=sys.stderr)
+                return 1
+        except json.JSONDecodeError as e:
+            print(f"Error: Failed to parse JSON from stdin: {e}", file=sys.stderr)
+            return 1
+    else:
+        # Read task description and patches from files
+        if not args.task_description_file or not args.patches_file:
+            print("Error: --task-description and --patches are required unless --input-json is used", file=sys.stderr)
+            return 1
+        task_description = args.task_description_file.read_text(encoding="utf-8")
+        patches = args.patches_file.read_text(encoding="utf-8")
+    
+    # Call main_with_args with the file contents
+    return main_with_args(
+        repo=args.repo,
+        container=args.container,
+        tips_path=args.tips_path,
+        task_description=task_description,
+        patches=patches,
+        agent_name=args.agent_name,
+        output_json=args.output_json
+    )
 
 
 if __name__ == "__main__":
