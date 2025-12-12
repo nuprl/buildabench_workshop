@@ -253,8 +253,7 @@ def main():
         help="Number of candidates to generate. Each candidate will avoid subjects from previous candidates. (default: 1)",
     )
     parser.add_argument(
-        "--flex-tier",
-        type=bool,
+        "--flex-processing",
         action="store_true",
         help="Enable flex processing (https://platform.openai.com/docs/guides/flex-processing)"
     )
