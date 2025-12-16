@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "dspy>=3.0.4",
+    "web-request-cache",
 ]
 
 [project.scripts]
@@ -17,3 +18,6 @@ julia-bench2 = "julia_bench2:main"
 [build-system]
 requires = ["uv_build>=0.9.11,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+web-request-cache = { path = "../web_request_cache", editable = true }

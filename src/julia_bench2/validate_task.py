@@ -151,6 +151,8 @@ def main_with_args(repo: Path, container, tips_path: Path, task_description: str
 
     with tarball_or_repo(repo_path) as repo_dir:
         repo_dir = repo_dir.absolute()
+        print(f"Working directory is {repo_dir}", file=sys.stderr, flush=True)
+
         
         prompt = env_subst(
             AGENT_PROMPT, REPO=repo_dir, CONTAINER=container, TIPS_PATH=tips_path, TASK_DESCRIPTION=task_description, PATCHES=patches

@@ -61,7 +61,8 @@ be helpful. When you are done building and running, revisit this tips file and,
 if needed, update it with new tips or modify existing tips.
 
 In your final response, you should say, "the container is ready to use" if you
-were able to build and run the container.
+were able to build and run the container. If you were unable to complete
+all steps, you should say "some steps failed".
 """.strip()
 
 
@@ -138,6 +139,8 @@ def main_with_args(repo: Path, container, tips_path: Path, agent_name: str, outp
 
         # Run agent and log output
         log_file = repo_dir / "env_agent_log.jsonl"
+
+        print(str(log_file), file=sys.stderr, flush=True)
         return_code = agent_instance.run(log_file=log_file, silent=output_json)
         
         # If output_json mode, collect and print artifacts

@@ -291,6 +291,7 @@ class ClaudeCode(Agent):
         for dir in self._dirs:
             argsv.extend(["--add-dir", dir])
 
+        argsv.append("-p")
         argsv.append(self._prompt)
 
         return argsv
