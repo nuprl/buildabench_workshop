@@ -146,6 +146,7 @@ def main_with_args(repo: Path, container, tips_path: Path, agent_name: str, outp
         # If output_json mode, collect and print artifacts
         if output_json:
             artifacts = collect_output_artifacts(repo_dir, log_file, tips_path, container)
+            artifacts["repo"] = str(repo_path)
             print(json.dumps(artifacts))
         
         return return_code
