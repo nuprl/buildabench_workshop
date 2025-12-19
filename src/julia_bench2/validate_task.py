@@ -192,7 +192,7 @@ def main_with_args(repo: Path, container, tips_path: Path, task_description: str
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--repo", type=str)
     parser.add_argument("--container", type=str)
     parser.add_argument("--tips-path", type=Path, required=True)
     parser.add_argument("--task-description", type=Path, dest="task_description_file", help="File containing task description (required unless --input-json)")
@@ -205,6 +205,7 @@ def main():
     
 
     task_id = args.task_id
+    repo = args.repo
     
     if args.input_json:
         # Read JSONL line from stdin
@@ -216,8 +217,10 @@ def main():
             data = json.loads(line.strip())
             task_description = data.get("task_description", "")
             patches = data.get("patches", "")
-            if not task_description or not patches:
-                print("Error: JSON must contain 'task_description' and 'patches' fields", file=sys.stderr)
+            repo = data.get("repo", "")
+            if not task_description or not patches or not repo:
+                print("Error: JSON must contain 'task_description', 'patches', and 'repo' fields", file=sys.stderr)
+                print(f"Keys were {data.keys()}", file=sys.stderr)
                 return 1
             # Extract task_id from JSON (command-line flag takes precedence)
             if task_id is None:
@@ -241,7 +244,7 @@ def main():
     
     # Call main_with_args with the file contents
     return main_with_args(
-        repo=args.repo,
+        repo=Path(repo),
         container=args.container,
         tips_path=args.tips_path,
         task_description=task_description,

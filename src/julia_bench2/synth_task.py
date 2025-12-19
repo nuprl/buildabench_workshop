@@ -7,7 +7,6 @@ instructions in the DSPy signature below.
 import dspy
 import argparse
 from pathlib import Path
-import fnmatch
 from typing import List, Tuple, Optional, Dict, Any
 import sys
 import json
@@ -16,28 +15,10 @@ from .repolib import tarball_or_repo, get_commit_sha
 
 
 def find_matching_files(repo_root: Path, patterns: List[str]) -> List[Path]:
-    """
-    Find all files in the repository that match any of the given wildcard patterns.
-    Patterns are relative to the repository root.
-    """
     matching_files = []
-
-    for file_path in repo_root.rglob("*"):
-        if not file_path.is_file():
-            continue
-
-        try:
-            rel_path = file_path.relative_to(repo_root)
-        except ValueError:
-            continue
-
-        for pattern in patterns:
-            if fnmatch.fnmatch(str(rel_path), pattern):
-                matching_files.append(file_path)
-                break  # Only add once even if matches multiple patterns
-
+    for pat in patterns:
+        matching_files.extend(repo_root.glob(pat))
     return sorted(matching_files)
-
 
 def format_code_with_headers(files: List[Path], repo_root: Path) -> str:
     """
@@ -128,7 +109,7 @@ class MakeFeatureRequest(dspy.Signature):
     avoid: str = dspy.InputField(description="List of existing subjects to avoid")
     subject: str = dspy.OutputField()
     task_description: str = dspy.OutputField(
-        description="The description for the interview"
+        description="The description for the interview. It should sound like the feature never existed, so do not mention that we are asking for it to be reimplemented. Give at least one test case that should pass when the feature is implemented correctly."
     )
     patches: str = dspy.OutputField()
 
@@ -137,15 +118,19 @@ make_feature_request_cot = dspy.ChainOfThought(MakeFeatureRequest)
 
 
 def make_feature_request(
-    repo_path: Path, patterns: List[str], avoid: List[str]
+    repo_path: Path, patterns: List[str], avoid: List[str], max_input_tokens: int
 ) -> Optional[Dict[str, Any]]:
     with tarball_or_repo(repo_path) as repo_dir:
         matching_files = find_matching_files(repo_dir, patterns)
         if not matching_files:
             raise ValueError(f"No files found matching patterns: {patterns}")
 
+
         commit_sha = get_commit_sha(repo_dir)
         formatted_code = format_code_with_headers(matching_files, repo_dir)
+        if len(formatted_code) > max_input_tokens * 3:
+            print(f"Warning: Formatted code is too long, truncating to {max_input_tokens * 3} tokens", file=sys.stderr, flush=True)
+            formatted_code = formatted_code[:(max_input_tokens * 3)]
         result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
 
         # Check if any feature request was generated
@@ -154,6 +139,7 @@ def make_feature_request(
 
         return {
             "task_id": f"{repo_path.name}/{len(avoid)}",
+            "matching_files": [str(file) for file in matching_files],
             "repo_id": str(repo_path),
             "commit_sha": commit_sha,
             # NOTE(arjun): stupid replacement is so that we can copy-paste in the shell.
@@ -165,9 +151,9 @@ def make_feature_request(
 
 
 def process_single_request(
-    repo_path: Path, patterns: List[str], json_output: bool, avoid: List[str]
+    repo_path: Path, patterns: List[str], json_output: bool, avoid: List[str], max_input_tokens: int
 ):
-    result = make_feature_request(repo_path, patterns, avoid)
+    result = make_feature_request(repo_path, patterns, avoid, max_input_tokens)
 
     if result is None:
         print("No feature request generated", file=sys.stderr)
@@ -196,6 +182,7 @@ def main_with_args(
     avoid: List[str],
     num_candidates: int,
     flex_processing: bool,
+    max_input_tokens: int,
 ):
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
@@ -213,7 +200,7 @@ def main_with_args(
     dspy.configure(lm=lm)
 
     for _ in range(num_candidates):
-        result = process_single_request(repo_path, patterns, json_output, avoid)
+        result = process_single_request(repo_path, patterns, json_output, avoid, max_input_tokens)
         if result and result.get("subject"):
             avoid.append(result["subject"])
 
@@ -226,6 +213,12 @@ def main():
         "repo_path",
         type=Path,
         help="Path to tarball containing a bare git repository or an existing repository directory",
+    )
+    parser.add_argument(
+        "--max-input-tokens",
+        type=int,
+        default=100000,
+        help="Maximum number of input tokens to allow for the model",
     )
     parser.add_argument(
         "patterns",
