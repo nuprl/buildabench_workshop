@@ -140,7 +140,7 @@ def make_feature_request(
         return {
             "task_id": f"{repo_path.name}/{len(avoid)}",
             "matching_files": [str(file) for file in matching_files],
-            "repo_id": str(repo_path),
+            "repo": str(repo_path),
             "commit_sha": commit_sha,
             # NOTE(arjun): stupid replacement is so that we can copy-paste in the shell.
             "subject": result.subject.replace("`", ""),

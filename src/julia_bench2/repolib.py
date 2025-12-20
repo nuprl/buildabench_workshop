@@ -69,33 +69,54 @@ def clone_bare_repo_to_working_tree(bare_repo_dir: Path, working_tree_dir: Path)
 
 
 @contextmanager
-def extracted_tarballed_repo(tarball: Path):
+def extracted_tarballed_repo(tarball: Path, working_dir: Optional[Path] = None):
     """
     Context manager that extracts a tarball containing a bare git repository
     and clones it to a working tree. Returns the working tree directory.
     
     Args:
         tarball: Path to tarball containing a bare git repository
+        working_dir: Optional persistent directory for the working tree.
+                     If None, uses a temporary directory that will be cleaned up.
+                     If provided, must not already exist.
     
     Yields:
         Path to the working tree directory
     
     Raises:
         FileNotFoundError: If tarball doesn't exist
-        ValueError: If tarball extraction fails
+        ValueError: If tarball extraction fails or working_dir already exists
         RuntimeError: If git operations fail
     """
     if not tarball.is_file():
         raise FileNotFoundError(f"Tarball not found: {tarball}")
     
-    with tempfile.TemporaryDirectory() as tmp_extract_dir, tempfile.TemporaryDirectory() as tmp_working_dir:
+    # Always use a temp directory for extracting the bare repo
+    with tempfile.TemporaryDirectory() as tmp_extract_dir:
         tmp_extract_path = Path(tmp_extract_dir)
-        working_tree_dir = Path(tmp_working_dir)
+        
+        temp_working_dir_created = False
+        if working_dir is not None:
+            # Use the provided persistent directory
+            working_tree_dir = Path(working_dir)
+            # Assert that the directory does not exist
+            if working_tree_dir.exists():
+                raise ValueError(f"Working directory {working_tree_dir} already exists")
+        else:
+            # Use a temporary directory that will be cleaned up
+            tmp_working_dir = tempfile.mkdtemp()
+            working_tree_dir = Path(tmp_working_dir)
+            temp_working_dir_created = True
         
         bare_repo_dir = extract_bare_repo(tarball, tmp_extract_path)
         clone_bare_repo_to_working_tree(bare_repo_dir, working_tree_dir)
         
-        yield working_tree_dir
+        try:
+            yield working_tree_dir
+        finally:
+            # Only clean up if we created a temporary working directory
+            if temp_working_dir_created and working_tree_dir.exists():
+                shutil.rmtree(working_tree_dir, ignore_errors=True)
 
 
 def get_commit_sha(repo_dir: Path) -> Optional[str]:
@@ -124,14 +145,17 @@ def get_commit_sha(repo_dir: Path) -> Optional[str]:
 
 
 @contextmanager
-def tarball_or_repo(path: Path):
+def tarball_or_repo(path: Path, working_dir: Optional[Path] = None):
     """
     Context manager that handles either a tarball or an existing repository directory.
-    If the path is a tarball, extracts and clones it (with cleanup on exit).
+    If the path is a tarball, extracts and clones it (with cleanup on exit unless working_dir is provided).
     If the path is an existing directory, yields it directly (no cleanup).
     
     Args:
         path: Path to either a tarball file or an existing repository directory
+        working_dir: Optional persistent directory for the working tree when path is a tarball.
+                     If None, uses a temporary directory that will be cleaned up.
+                     Ignored if path is an existing directory.
     
     Yields:
         Path to the working tree directory
@@ -146,7 +170,7 @@ def tarball_or_repo(path: Path):
     
     if path.is_file():
         # It's a tarball, use the extracted_tarballed_repo context manager
-        with extracted_tarballed_repo(path) as repo_dir:
+        with extracted_tarballed_repo(path, working_dir) as repo_dir:
             yield repo_dir
     elif path.is_dir():
         # It's an existing directory, just yield it without cleanup
