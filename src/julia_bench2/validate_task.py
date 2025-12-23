@@ -104,8 +104,8 @@ def may_read(file_path: Path) -> str | None:
         return None
 
 
-def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) -> dict:
-    """Collect tips file, log file, src.diff, tests.diff, and commit message."""
+def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path, container: str, repo_path: Path) -> dict:
+    """Collect tips file, log file, src.diff, tests.diff, commit message, container, and repo."""
     commit_message = None
     try:
         result = subprocess.run(
@@ -125,6 +125,8 @@ def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path) ->
         "src.diff": may_read(repo_dir / "src.diff"),
         "tests.diff": may_read(repo_dir / "tests.diff"),
         "commit_message": commit_message,
+        "container": container,
+        "repo": str(repo_path),
     }
 
 def main_with_args(repo: Path, container, tips_path: Path, task_description: str, patches: str, agent_name: str, task_id: str, output_json: bool = False):
@@ -183,7 +185,7 @@ def main_with_args(repo: Path, container, tips_path: Path, task_description: str
         return_code = agent_instance.run(log_file=log_file, silent=output_json)
         
         if output_json:
-            artifacts = collect_output_artifacts(repo_dir, log_file, tips_path)
+            artifacts = collect_output_artifacts(repo_dir, log_file, tips_path, container, repo_path)
             artifacts["task_id"] = task_id
             print(json.dumps(artifacts))
         

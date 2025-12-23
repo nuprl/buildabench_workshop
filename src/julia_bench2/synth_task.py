@@ -74,6 +74,9 @@ class MakeFeatureRequest(dspy.Signature):
        when the feature is added back.
        before the feature is removed and pass after the feature is added back.
 
+    4. The feature should not critically depend on a GPU or a cluster, because
+       we need to be able to run the code in a portable container.
+
     Describe how to edit the code to remove the feature by identifying chunks of
     edits. Each chunk should have the following lines:
 
@@ -124,6 +127,9 @@ def make_feature_request(
         matching_files = find_matching_files(repo_dir, patterns)
         if not matching_files:
             raise ValueError(f"No files found matching patterns: {patterns}")
+        for f in matching_files:
+            print(f"- {f}", file=sys.stderr)
+        print(file=sys.stderr, flush=True)
 
 
         commit_sha = get_commit_sha(repo_dir)

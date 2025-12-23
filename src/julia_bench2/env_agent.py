@@ -17,6 +17,7 @@ files, and has limited access to GitHub.
 import argparse
 import sys
 import json
+import subprocess
 from pathlib import Path
 
 from .agentlib import env_subst, container_exists, standard_container_name
@@ -66,11 +67,22 @@ all steps, you should say "some steps failed".
 """.strip()
 
 
+def get_image_hash(container: str) -> str:
+    """Get the hash/ID of a container image."""
+    result = subprocess.check_output(
+        ["podman", "inspect", container, "--format", "{{.Id}}"],
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    return result.strip()
+
+
 def collect_output_artifacts(repo_dir: Path, log_file: Path, tips_path: Path, container: str) -> dict:
-    """Collect tips file, Dockerfile, and log file."""
+    """Collect tips file, Dockerfile, log file, and image hash."""
     dockerfile_path = repo_dir / "Dockerfile"
     return {
-        "docker_image_name": container,
+        "container": container,
+        "docker_image_hash": get_image_hash(container),
         "tips": tips_path.read_text(encoding="utf-8", errors="replace"),
         "dockerfile": dockerfile_path.read_text(encoding="utf-8", errors="replace"),
         "log": log_file.read_text(encoding="utf-8", errors="replace"),

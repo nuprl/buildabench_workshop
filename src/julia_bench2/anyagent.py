@@ -242,6 +242,8 @@ class ClaudeCode(Agent):
         if not file_path.is_file():
             raise ValueError(f"Path {file_path} is not a file")
         
+        # NOTE(arjun): This doesn't seem to work. Maybe I need to also give Read
+        # permissions?
         self._allowed_tools.append(f"Edit({file_path})")
 
     def allow_web_search(self) -> None:

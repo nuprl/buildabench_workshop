@@ -8,28 +8,28 @@ python3 -m julia_bench2.eval_agent \
     --tasks TASK_FILE \
     --validated-tasks VALIDATED_TASK_FILE \
     --task-id TASK_ID \
-    --image CONTAINER_NAME \
     --agent-name AGENT_NAME
 
 See synth_task.py for the format of TASK_FILE and validate_task.py for the
 format of VALIDATED_TASK_FILE. The TASK_ID is the unique key that selects the
-right row from both files.
+right row from both files. The container name is read from the validated_tasks_file.
 
 Approach:
 
-1. Assert that the Podman image named CONTAINER_NAME exists.
-2. Extract the repository (named in the task row) to a temporary directory
+1. Load the container name from the validated task data.
+2. Assert that the Podman image exists.
+3. Extract the repository (named in the task row) to a temporary directory
    using repolib.
-3. Apply the validated task patch (src.diff from the validated task row) to the
+4. Apply the validated task patch (src.diff from the validated task row) to the
    repository with `git apply`.
-4. Run the agent (using anyagent) on the temporary directory. It can edit
+5. Run the agent (using anyagent) on the temporary directory. It can edit
    any file, but cannot run any code. The prompt for the agent is
    task_description from the task row.
-5. Apply the validated test path (tests.diff from the validated task row) to the
+6. Apply the validated test path (tests.diff from the validated task row) to the
    repository with `git apply`.
-6. Run the container with the temporary directory mounted to /repo.
+7. Run the container with the temporary directory mounted to /repo.
    (See env_agent.py to see how this is expected to work.)
-7. Print to stdout a JSON object with the agent log, the container run log,
+8. Print to stdout a JSON object with the agent log, the container run log,
    exit codes from the various steps, and a git diff on the working copy of
    the repository.
 """
@@ -130,7 +130,6 @@ def main_with_args(
     tasks_file: Path,
     validated_tasks_file: Path,
     task_id: str,
-    container: str,
     agent_name: str,
     timeout: int = 300,
     working_path: Optional[Path] = None,
@@ -156,11 +155,7 @@ def main_with_args(
         "error": None,
     }
     
-    # Step 1: Assert that the Podman image exists
-    if not container_exists(container):
-        raise EvalAgentError(f"Container {container} does not exist")
-    
-    # Step 2: Load task and validated task data
+    # Step 1: Load task and validated task data
     try:
         task_data = load_jsonl_task(tasks_file, task_id)
     except Exception as e:
@@ -177,8 +172,17 @@ def main_with_args(
     if not validated_task_data:
         raise EvalAgentError(f"Task ID {task_id} not found in validated tasks file")
     
-    # Extract repository path from task data
-    repo_path_str = task_data.get("repo")
+    # Extract container name from validated task data
+    container = validated_task_data.get("container")
+    if not container:
+        raise EvalAgentError("Validated task data missing 'container' field")
+    
+    # Step 2: Assert that the Podman image exists
+    if not container_exists(container):
+        raise EvalAgentError(f"Container {container} does not exist")
+    
+    # Extract repository path from task data (prefer validated task data, fall back to task data)
+    repo_path_str = validated_task_data.get("repo") or task_data.get("repo")
     if not repo_path_str:
         raise EvalAgentError("Task data missing 'repo' field")
     
@@ -253,14 +257,20 @@ def main():
     parser.add_argument("--tasks", type=Path, required=True, dest="tasks_file", help="Path to tasks JSONL file")
     parser.add_argument("--validated-tasks", type=Path, required=True, dest="validated_tasks_file", help="Path to validated tasks JSONL file")
     parser.add_argument("--task-id", type=str, required=True, help="Task ID to evaluate")
-    parser.add_argument("--image", type=str, required=True, dest="container", help="Container image name")
     parser.add_argument("--agent-name", type=str, required=True, help="Agent name (e.g., 'claude' or 'codex')")
     parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds for container execution (default: 300)")
     parser.add_argument("--working-path", type=Path, default=None, dest="working_path", help="Persistent directory to extract repository to (default: use temporary directory)")
     args = parser.parse_args()
     
     try:
-        result = main_with_args(**vars(args))
+        result = main_with_args(
+            tasks_file=args.tasks_file,
+            validated_tasks_file=args.validated_tasks_file,
+            task_id=args.task_id,
+            agent_name=args.agent_name,
+            timeout=args.timeout,
+            working_path=args.working_path,
+        )
     except EvalAgentError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
