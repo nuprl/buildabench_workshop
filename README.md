@@ -56,7 +56,7 @@ to work. The best way to understand the technical approach is to read the
 prompts linked below.
 
 First, read
-[env_agent.py](https://github.com/nuprl/prl_ml/blob/main/arjun/buildabench_workshop/src/buildabench_workshop/env_agent.py#L28).
+[env_agent.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/env_agent.py#L28).
 Contrast this task to the much simpler task that SWE-Smith uses to install
 packages (Figure 10). The SWE-Smith task has the agent install the repository
 and run the tests, and just report back on what it did. The researchers then
@@ -67,7 +67,7 @@ last two requirements are difficult to satisfy simultaneously. See the prompt
 for more information.
 
 Second, read
-[synth_task.py](https://github.com/nuprl/prl_ml/blob/main/arjun/buildabench_workshop/src/buildabench_workshop/synth_task.py#L46).
+[synth_task.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/synth_task.py#L46).
 This was the hardest prompt to get right, and is very different from what
 SWE-Smith does in several ways. SWE-Smith uses an LLM to synthesize tasks in
 three ways. The simplest task it gives the model is to introduce a subtle bug in
@@ -88,7 +88,7 @@ deliberate choice, as the Aider format is known to be easier for models to
 reason about, and its likely that models today are trained to use this format.
 
 Finally, read
-[validate_task.py](https://github.com/nuprl/prl_ml/blob/main/arjun/buildabench_workshop/src/buildabench_workshop/validate_task.py#L19).
+[validate_task.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/validate_task.py#L19).
 For every candidate task, SWE-Smith runs the task in a container to validate
 that it behaves as expected. We have to do this as well, but instead of directly
 running the container, we have an agent manage the process. If the patch to
@@ -221,12 +221,62 @@ feature, despite an explicit instruction not to do so.
 
 The final step is to actually benchmark an agent on these tasks. I am actually
 not interested in benchmarking Rust. But, I have started to benchmark agents
-on Julia tasks with [eval_agent.py](https://github.com/nuprl/prl_ml/blob/main/arjun/buildabench_workshop/src/buildabench_workshop/eval_agent.py).
+on Julia tasks.
 
 ### Build-A-Bench on Julia
 
-I have several more results with Julia that I'll write up later.
+My first target Julia project was ILVM translated to Julia, using Cursor
+Composer 1. These are the tasks that we get, and the length of the gold patch.
 
+| task_id       | subject                                                              | src_lines | tests_lines | Gold |
+| ------------- | -------------------------------------------------------------------- | --------: | ----------: | ---: |
+| ilvm_jl.tar/0 | Re-implementing heap allocation and free-list–based malloc/free      |       268 |          38 |  230 |
+| ilvm_jl.tar/1 | Re-implementing the ILVM print instruction and output semantics      |       217 |          37 |  180 |
+| ilvm_jl.tar/2 | Re-implementing conditional branching via the ILVM ifz instruction   |       210 |          45 |  165 |
+| ilvm_jl.tar/3 | Re-implementing multi-block programs and goto-based control flow     |       227 |          82 |  145 |
+| ilvm_jl.tar/4 | Adding binary arithmetic and comparison operators to the ILVM        |       279 |         100 |  179 |
+| ilvm_jl.tar/5 | Implementing string literal printing in the ILVM                     |       124 |          44 |   80 |
+| ilvm_jl.tar/6 | Re-implementing the ILVM exit instruction and process termination    |       317 |         201 |  116 |
+| ilvm_jl.tar/7 | Re-implementing ILVM’s pointer dereference load and store operations |       209 |          42 |  167 |
+| ilvm_jl.tar/8 | Re-implementing the ILVM command-line interface                      |        97 |          64 |   33 |
+| ilvm_jl.tar/9 | Re-implementing array-printing support in the ILVM                   |       157 |          69 |   88 |
+
+As you can see, these gold patches are an order of magnitude larger than the
+gold patches that SWE-Smith produces. It is also interesting how they keep
+getting smaller. Recall that each successive task generation is constrained to
+not be one the previous tasks. 
+
+It's interesting how there is such strong overlap between the Rust and Julia tasks. My critiques:
+
+1. `ilvm_jl.tar/3`: this task is nonsensical, but distinct from any Rust task.
+2. `ilvm_jl.tar/6`: this task is poorly described, and sort of silly.
+3. `ilvm_jl.tar/7`: this task is poorly described
+4. `ilvm_jl.tar/8`: this task is different from any Rust task, but well described.
+
+**Results on Cursor Composer-1:** So, how do agents do? There are several ways
+to configure an agent for automatic evaluation. My approach with
+[eval_agent.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/eval_agent.py)
+is arguably unfair to agents, because it prevents the agent from running any
+code.
+
+Here are the results:
+
+| task_id       | subject                                                              | success |
+| ------------- | -------------------------------------------------------------------- | ------- |
+| ilvm_jl.tar/0 | Re-implementing heap allocation and free-list–based malloc/free      | ❌       |
+| ilvm_jl.tar/1 | Re-implementing the ILVM print instruction and output semantics      | ✅       |
+| ilvm_jl.tar/2 | Re-implementing conditional branching via the ILVM ifz instruction   | ❌       |
+| ilvm_jl.tar/3 | Re-implementing multi-block programs and goto-based control flow     | ⏭️      |
+| ilvm_jl.tar/4 | Adding binary arithmetic and comparison operators to the ILVM        | ❌       |
+| ilvm_jl.tar/5 | Implementing string literal printing in the ILVM                     | ❌       |
+| ilvm_jl.tar/6 | Re-implementing the ILVM exit instruction and process termination    | ✅       |
+| ilvm_jl.tar/7 | Re-implementing ILVM’s pointer dereference load and store operations | ✅       |
+| ilvm_jl.tar/8 | Re-implementing the ILVM command-line interface                      | ❌       |
+| ilvm_jl.tar/9 | Re-implementing array-printing support in the ILVM                   | ✅       |
+
+I had an earlier run where Composer-1 was able complete the first task successfully, so it
+is not impossible. I started looking at the failures, and they seem to be typical flaws
+like hallucinated method names, and not due to underspecification.
 
 
 [SWE-Smith]: https://arxiv.org/abs/2504.21798
