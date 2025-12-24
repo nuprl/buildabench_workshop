@@ -16,8 +16,8 @@ to synthesize programming tasks that involve reimplementing existing features*?
 
 Finally, I think a SWE-Smith style approach is necessary when working with a
 low-resource language. I think the SWE-Bench approach does not scale to
-low-resource languages, and I have a stalled project that shows why (See
-`arjun/julia_bench`). ([TODO] I should explain the failure in that directory.)
+low-resource languages. See the `./dumpster` directory for an example of what
+goes wrong with Julia.
 
 There is a modicum of Julia-specific code in this project. But, the core
 idea is language-agnostic. In fact, I have applied Build-A-Bench to an
@@ -162,8 +162,7 @@ use to select different models or agents.
    now, you need to set this manually. Selecting the context automatically for
    this task may be interesting, but not on the critical path.
 
-   At this point, one should read the generated generatedI'll write up the results later.
- tasks. The JSON file
+   At this point, one should read the generated generated tasks. The JSON file
    is large, and has long, multi-line strings that are difficult to read in
    a text editor. If you're on Linux, [slopjson](https://github.com/arjunguha/slopjson)
    is an incredible JSON viewer that's up to the task.
