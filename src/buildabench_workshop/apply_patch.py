@@ -12,6 +12,7 @@ from collections import defaultdict
 import sys
 import logging
 import os
+import re
 
 from .repolib import tarball_or_repo
 
@@ -22,11 +23,11 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
     
     Format:
     ### file/path.py  (optional ### prefix)
-    <<<<<<< SEARCH
+    <<<<<<< SEARCH  (variable number of < characters, minimum 2)
     [search content]
     =======
     [replace content]
-    >>>>>>> REPLACE
+    >>>>>>> REPLACE  (same number of > characters as < characters)
     
     Returns a list of tuples: (file_path, search_text, replace_text)
     """
@@ -34,11 +35,18 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
     lines = patch_content.splitlines(keepends=True)
     i = 0
     
+    # Regex pattern to match SEARCH marker: at least 2 < characters followed by whitespace and SEARCH
+    search_pattern = re.compile(r'^(\s*)(<{2,})\s+SEARCH')
+    
     while i < len(lines):
-        # Look for SEARCH marker
-        if not lines[i].strip().startswith('<<<<<<< SEARCH'):
+        # Look for SEARCH marker using regex
+        search_match = search_pattern.match(lines[i].strip())
+        if not search_match:
             i += 1
             continue
+        
+        # Count the number of < characters
+        num_less_than = len(search_match.group(2))
         
         # Look back 1 line for the file path
         if i == 0:
@@ -68,9 +76,12 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
         
         i += 1  # Skip divider line
         
-        # Collect replace text until REPLACE marker
+        # Collect replace text until REPLACE marker with matching number of > characters
         replace_lines = []
-        while i < len(lines) and not lines[i].strip().startswith('>>>>>>> REPLACE'):
+        # Build exact string for REPLACE marker with matching number of > characters
+        replace_marker = '>' * num_less_than + ' REPLACE'
+        
+        while i < len(lines) and not lines[i].strip().startswith(replace_marker):
             replace_lines.append(lines[i])
             i += 1
         
