@@ -56,7 +56,7 @@ to work. The best way to understand the technical approach is to read the
 prompts linked below.
 
 First, read
-[env_agent.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/env_agent.py#L28).
+[env_agent.py](https://github.com/nuprl/buildabench_workshop/blob/master/src/buildabench_workshop/env_agent.py#L29).
 Contrast this task to the much simpler task that SWE-Smith uses to install
 packages (Figure 10). The SWE-Smith task has the agent install the repository
 and run the tests, and just report back on what it did. The researchers then
@@ -67,7 +67,7 @@ last two requirements are difficult to satisfy simultaneously. See the prompt
 for more information.
 
 Second, read
-[synth_task.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/synth_task.py#L46).
+[synth_task.py](https://github.com/nuprl/buildabench_workshop/blob/master/src/buildabench_workshop/synth_task.py#L48).
 This was the hardest prompt to get right, and is very different from what
 SWE-Smith does in several ways. SWE-Smith uses an LLM to synthesize tasks in
 three ways. The simplest task it gives the model is to introduce a subtle bug in
@@ -88,14 +88,14 @@ deliberate choice, as the Aider format is known to be easier for models to
 reason about, and its likely that models today are trained to use this format.
 
 Finally, read
-[validate_task.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/validate_task.py#L19).
+[validate_task.py](https://github.com/nuprl/buildabench_workshop/blob/master/src/buildabench_workshop/validate_task.py#L21).
 For every candidate task, SWE-Smith runs the task in a container to validate
 that it behaves as expected. We have to do this as well, but instead of directly
 running the container, we have an agent manage the process. If the patch to
 construct the candidate task is not quite right, we allow the agent o clean it
 up. Thus this agent regenerates the patch that it receives from the synth_task
 agent and potentially fixes them. This ends up "saving" a lot of tasks that are
-close to correct. Like SWE-Smith, this agentalso generates two separate patches
+close to correct. Like SWE-Smith, this agent also generates two separate patches
 to remove the feature and to add the tests, which the previous agent does not
 do.
 
@@ -106,7 +106,6 @@ current design that separates task synthesis and validation is that we can
 generate a large volume of unvalidated tasks, and as long as we have reason
 to believe they are likely valid, we can use them for supervised fine-tuning.
 However, our focus right now is on benchmarking.
-
 
 ## Preliminary Results
 
@@ -125,7 +124,6 @@ language.
 Here are the steps to run it, and there are command-line flags that you can
 use to select different models or agents.
 
-
 1. Create the tips files:
 
    ```bash
@@ -141,7 +139,6 @@ use to select different models or agents.
    ```
 
 3. Run env_agent to create the execution environment:
-
 
    ```bash
    uv run python3 -m buildabench_workshop.env_agent \
@@ -175,7 +172,7 @@ use to select different models or agents.
    ```bash
     parallel -j 1 --progress --bar \
         'sed -n "{}p" tasks.jsonl | python3 -m buildabench_workshop.validate_task --tips-path rust_validate_task_tips.txt --agent codex --input-json --output-json' \
-        ::: `seq 10` >> validated_tasks.jsonlI'll write up the results later.
+        ::: `seq 10` >> validated_tasks.jsonl
 
     ```
 
@@ -192,8 +189,7 @@ though I did read all the tasks carefully.
 
 1. Heap allocation and free‑list memory management with malloc and free instructions
 
-2. Implementing a print instruction (including array prI'll write up the results later.
-inting) in the ILVM interpreter
+2. Implementing a print instruction (including array printing) in the ILVM interpreter
 
 3. Implementing conditional branching with the ifz instruction in the ILVM interpreter
 
@@ -256,7 +252,7 @@ It's interesting how there is such strong overlap between the Rust and Julia tas
 
 **Results on Cursor Composer-1:** So, how do agents do? There are several ways
 to configure an agent for automatic evaluation. My approach with
-[eval_agent.py](https://github.com/nuprl/prl_ml/blob/main/buildabench_workshop/src/buildabench_workshop/eval_agent.py)
+[eval_agent.py](hhttps://github.com/nuprl/buildabench_workshop/blob/master/src/buildabench_workshop/eval_agent.py)
 is arguably unfair to agents, because it prevents the agent from running any
 code.
 
@@ -278,8 +274,6 @@ Here are the results:
 I had an earlier run where Composer-1 was able complete the first task successfully, so it
 is not impossible. I started looking at the failures, and they seem to be typical flaws
 like hallucinated method names, and not due to underspecification.
-
-
 
 ## Acknowledgements
 
