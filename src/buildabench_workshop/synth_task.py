@@ -142,36 +142,43 @@ def _get_log_level() -> int:
 
 
 def make_feature_request(
-    repo_dir: Path, repo_path: Path, matching_files: List[Path], avoid: List[str], max_input_tokens: int
+    repo_dir: Path, repo_path: Path, matching_files: List[Path], avoid: List[str], max_input_tokens: int, num_attempts: int
 ) -> Optional[Dict[str, Any]]:
     commit_sha = get_commit_sha(repo_dir)
     formatted_code = format_code_with_headers(matching_files, repo_dir)
     if len(formatted_code) > max_input_tokens * 3:
         logging.warning(f"Formatted code is too long, truncating to {max_input_tokens * 3} tokens")
         formatted_code = formatted_code[:(max_input_tokens * 3)]
-    result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
-
-    # Check if any feature request was generated
-    if not result.subject and not result.task_description and not result.patches:
-        return None
 
     # Validate patches by checking if they apply cleanly
     patch_ok = False
-    patch_errors: List[str] = []
-    if result.patches:
-        try:
-            patch_ok = apply_patch(repo_dir, result.patches, patch_errors, dry_run=True)
-        except Exception as e:
-            patch_errors = [f"Error validating patches: {e}"]
-            patch_ok = False
+
+    for _ in range(num_attempts):
+        
+        result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
+
+        # Check if any feature request was generated
+        if not result.subject and not result.task_description and not result.patches:
+            continue
+
+        patch_errors: List[str] = []
+        if result.patches:
+            try:
+                patch_ok = apply_patch(repo_dir, result.patches, patch_errors, dry_run=True)
+            except Exception as e:
+                patch_errors = [f"Error validating patches: {e}"]
+                patch_ok = False
+
+        if patch_ok:
+            break
+        
 
     return {
         "task_id": f"{repo_path.name}/{len(avoid)}",
         "matching_files": [str(file) for file in matching_files],
         "repo": str(repo_path),
         "commit_sha": commit_sha,
-        # NOTE(arjun): stupid replacement is so that we can copy-paste in the shell.
-        "subject": result.subject.replace("`", ""),
+        "subject": result.subject,
         "task_description": result.task_description,
         "patches": result.patches,
         "reasoning": result.reasoning,
@@ -181,9 +188,9 @@ def make_feature_request(
 
 
 def process_single_request(
-    repo_dir: Path, repo_path: Path, matching_files: List[Path], json_output: bool, avoid: List[str], max_input_tokens: int
+    repo_dir: Path, repo_path: Path, matching_files: List[Path], json_output: bool, avoid: List[str], max_input_tokens: int, num_attempts: int
 ):
-    result = make_feature_request(repo_dir, repo_path, matching_files, avoid, max_input_tokens)
+    result = make_feature_request(repo_dir, repo_path, matching_files, avoid, max_input_tokens, num_attempts)
 
     if result is None:
         print("No feature request generated", file=sys.stderr)
@@ -214,6 +221,7 @@ def main_with_args(
     flex_processing: bool,
     model: str,
     max_input_tokens: int,
+    num_attempts: int,
 ):
     # Configure logging from LOGLEVEL environment variable
     log_level = _get_log_level()
@@ -249,7 +257,7 @@ def main_with_args(
             logging.info(f"- {f}")
         
         for i in range(num_candidates):
-            result = process_single_request(repo_dir, repo_path, matching_files, json_output, avoid, max_input_tokens)
+            result = process_single_request(repo_dir, repo_path, matching_files, json_output, avoid, max_input_tokens, num_attempts)
             if result and result.get("subject"):
                 avoid.append(result["subject"])
 
@@ -304,6 +312,13 @@ def main():
         "--flex-processing",
         action="store_true",
         help="Enable flex processing (https://platform.openai.com/docs/guides/flex-processing)"
+    )
+    parser.add_argument(
+        "--num-attempts",
+        type=int,
+        dest="num_attempts",
+        default=3,
+        help="Number of attempts to generate a valid feature request (default: 3)",
     )
     args = parser.parse_args()
     main_with_args(**vars(args))
