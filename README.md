@@ -110,6 +110,8 @@ However, our focus right now is on benchmarking.
 
 ## Preliminary Results
 
+The artifacts described below are available in this [Hugging Face dataset](https://huggingface.co/datasets/arjunguha/buildabench-workshop/tree/main).
+
 ### Build-A-Bench on Rust
 
 So, does it work? It is very hard to determine if the synthesized tasks are any
@@ -276,6 +278,12 @@ Here are the results:
 I had an earlier run where Composer-1 was able complete the first task successfully, so it
 is not impossible. I started looking at the failures, and they seem to be typical flaws
 like hallucinated method names, and not due to underspecification.
+
+
+
+## Acknowledgements
+
+This work is supported by U.S. Department of Energy, Office of Science (DE-SC0025613).
 
 
 [SWE-Smith]: https://arxiv.org/abs/2504.21798

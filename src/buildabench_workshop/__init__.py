@@ -1,2 +1,2 @@
-def main() -> None:
-    print("Hello from julia-bench2!")
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Northeastern University

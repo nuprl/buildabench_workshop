@@ -3,6 +3,10 @@ name = "buildabench_workshop"
 version = "0.1.0"
 description = "Build-A-Bench Workshop"
 readme = "README.md"
+license = { file = "LICENSE" }
+classifiers = [
+  "License :: OSI Approved :: BSD License",
+]
 authors = [
     { name = "Arjun Guha", email = "a.guha@northeastern.edu" }
 ]

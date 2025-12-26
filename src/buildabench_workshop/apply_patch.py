@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 Apply patches to a repository. Patches are in the SEARCH/REPLACE format described
 in synth_task.py.

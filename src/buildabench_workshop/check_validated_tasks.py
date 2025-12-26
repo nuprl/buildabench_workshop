@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 Check that the output of validate_task.py is correct.
 

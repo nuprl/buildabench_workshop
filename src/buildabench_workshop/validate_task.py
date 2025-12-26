@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 You should read the AGENT_PROMPT below to understand what this script does.
 

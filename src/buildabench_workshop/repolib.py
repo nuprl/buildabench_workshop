@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 Library for handling git repositories, either as directories or tarballs.
 """

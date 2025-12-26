@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 CLI-based software engineering agents, such as Claude Code and Codex CLI, are
 carefully designed to be suitable for noninteractive work. Unfortunately, these

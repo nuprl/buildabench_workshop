@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 This script requires a CLI agent (Claude Code, Codex, etc.) and Podman. It can
 definitely be adapted to support Docker instead of Podman. It has no Python

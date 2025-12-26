@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 A script to check if a repository is a good candidate for an environment.
 We use the following heuristics:

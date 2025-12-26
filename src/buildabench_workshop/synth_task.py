@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 The purpose of this script is to synthesize non-trivial programming tasks to
 do in a repository. The best way to understand what it does it to read the

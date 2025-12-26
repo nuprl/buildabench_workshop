@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Arjun Guha
 """
 Evaluate an agent (using anyagent) on a task. For now, we do not allow the
 agent to run code, and only allow it to edit files.
