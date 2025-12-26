@@ -25,9 +25,12 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
     ### file/path.py  (optional ### prefix)
     <<<<<<< SEARCH  (variable number of < characters, minimum 2)
     [search content]
-    =======
-    [replace content]
+    ===  (3 or more = characters, nothing else on that line, optional)
+    [replace content]  (only present if divider is present)
     >>>>>>> REPLACE  (same number of > characters as < characters)
+    
+    If the divider is missing, the block concludes immediately with the REPLACE marker,
+    meaning the searched text is deleted (replace_text is empty).
     
     Returns a list of tuples: (file_path, search_text, replace_text)
     """
@@ -37,6 +40,8 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
     
     # Regex pattern to match SEARCH marker: at least 2 < characters followed by whitespace and SEARCH
     search_pattern = re.compile(r'^(\s*)(<{2,})\s+SEARCH')
+    # Regex pattern to match divider: 3 or more = characters, nothing else on the line
+    divider_pattern = re.compile(r'^={3,}$')
     
     while i < len(lines):
         # Look for SEARCH marker using regex
@@ -64,36 +69,48 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
         
         i += 1  # Skip SEARCH line
         
-        # Collect search text until divider
+        # Build exact string for REPLACE marker with matching number of > characters
+        replace_marker = '>' * num_less_than + ' REPLACE'
+        
+        # Collect search text until divider or REPLACE marker
         search_lines = []
-        while i < len(lines) and not lines[i].strip().startswith('======='):
+        while i < len(lines):
+            stripped_line = lines[i].strip()
+            # Check if this is a divider or REPLACE marker
+            if divider_pattern.match(stripped_line) or stripped_line.startswith(replace_marker):
+                break
             search_lines.append(lines[i])
             i += 1
         
         if i >= len(lines):
-            errors.append(f"Warning: No divider found for {file_path}, skipping")
+            errors.append(f"Warning: No divider or REPLACE marker found for {file_path}, skipping")
             break
         
-        i += 1  # Skip divider line
-        
-        # Collect replace text until REPLACE marker with matching number of > characters
-        replace_lines = []
-        # Build exact string for REPLACE marker with matching number of > characters
-        replace_marker = '>' * num_less_than + ' REPLACE'
-        
-        while i < len(lines) and not lines[i].strip().startswith(replace_marker):
-            replace_lines.append(lines[i])
-            i += 1
-        
-        if i >= len(lines):
-            errors.append(f"Warning: No REPLACE marker found for {file_path}, skipping")
-            break
-        
-        i += 1  # Skip REPLACE line
+        # Check if we hit a divider or REPLACE marker
+        stripped_line = lines[i].strip()
+        if divider_pattern.match(stripped_line):
+            # Divider found - skip it and collect replace text
+            i += 1  # Skip divider line
+            
+            # Collect replace text until REPLACE marker
+            replace_lines = []
+            while i < len(lines) and not lines[i].strip().startswith(replace_marker):
+                replace_lines.append(lines[i])
+                i += 1
+            
+            if i >= len(lines):
+                errors.append(f"Warning: No REPLACE marker found for {file_path}, skipping")
+                break
+            
+            i += 1  # Skip REPLACE line
+            replace_text = ''.join(replace_lines)
+        else:
+            # No divider - REPLACE marker found immediately, meaning deletion
+            i += 1  # Skip REPLACE line
+            replace_text = ''  # Empty replace text means deletion
         
         # Join lines, preserving exact content (including trailing newlines/spaces)
         search_text = ''.join(search_lines)
-        replace_text = ''.join(replace_lines)
         
         chunks.append((file_path, search_text, replace_text))
     
