@@ -10,13 +10,15 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 from collections import defaultdict
 import sys
+import logging
+import os
 
 from .repolib import tarball_or_repo
 
 
-def parse_patch_file(patch_file: Path, errors: List[str]) -> List[Tuple[str, str, str]]:
+def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str, str, str]]:
     """
-    Parse a patch file in the SEARCH/REPLACE format.
+    Parse patch content in the SEARCH/REPLACE format.
     
     Format:
     ### file/path.py  (optional ### prefix)
@@ -28,10 +30,8 @@ def parse_patch_file(patch_file: Path, errors: List[str]) -> List[Tuple[str, str
     
     Returns a list of tuples: (file_path, search_text, replace_text)
     """
-    content = patch_file.read_text(encoding="utf-8")
-    
     chunks = []
-    lines = content.splitlines(keepends=True)
+    lines = patch_content.splitlines(keepends=True)
     i = 0
     
     while i < len(lines):
@@ -107,13 +107,19 @@ def apply_patch_to_content(content: str, search_text: str, replace_text: str, fi
     return new_content, True
 
 
-def apply_patch(repo_dir: Path, patch_file: Path, errors: List[str]) -> bool:
+def apply_patch(repo_dir: Path, patch_content: str, errors: List[str], dry_run: bool) -> bool:
     """
-    Apply a patch file to a repository directory.
+    Apply patch content to a repository directory.
+    
+    Args:
+        repo_dir: Repository directory to apply patches to
+        patch_content: Patch content string in SEARCH/REPLACE format
+        errors: List to accumulate error messages
+        dry_run: If True, only check if patches apply cleanly without writing files
     
     Returns True if all patches were applied successfully, False otherwise.
     """
-    chunks = parse_patch_file(patch_file, errors)
+    chunks = parse_patch_content(patch_content, errors)
     
     if not chunks:
         errors.append("Error: No valid patch chunks found in patch file")
@@ -141,7 +147,8 @@ def apply_patch(repo_dir: Path, patch_file: Path, errors: List[str]) -> bool:
             success = False
             continue
         
-        print(f"Applying {len(patches)} patch(es) to {file_path_str}...", file=sys.stderr)
+        action = "Checking" if dry_run else "Applying"
+        logging.info(f"{action} {len(patches)} patch(es) to {file_path_str}...")
         
         # Apply all patches for this file to the content string
         for search_text, replace_text in patches:
@@ -149,32 +156,80 @@ def apply_patch(repo_dir: Path, patch_file: Path, errors: List[str]) -> bool:
             if not patch_success:
                 success = False
         
-        # Write the file once after applying all patches
-        try:
-            file_path.write_text(content, encoding="utf-8")
-        except Exception as e:
-            errors.append(f"Error writing {file_path}: {e}")
-            success = False
+        # Write the file only if not in dry-run mode
+        if not dry_run:
+            try:
+                file_path.write_text(content, encoding="utf-8")
+            except Exception as e:
+                errors.append(f"Error writing {file_path}: {e}")
+                success = False
     
     return success
 
 
-def main_with_args(repo_path: Path, patch_file: Path):
+def apply_patch_file(repo_dir: Path, patch_file: Path, errors: List[str], dry_run: bool) -> bool:
+    """
+    Apply a patch file to a repository directory.
+    
+    Args:
+        repo_dir: Repository directory to apply patches to
+        patch_file: Path to patch file in SEARCH/REPLACE format
+        errors: List to accumulate error messages
+        dry_run: If True, only check if patches apply cleanly without writing files
+    
+    Returns True if all patches were applied successfully, False otherwise.
+    """
+    try:
+        patch_content = patch_file.read_text(encoding="utf-8")
+    except Exception as e:
+        errors.append(f"Error reading patch file {patch_file}: {e}")
+        return False
+    
+    return apply_patch(repo_dir, patch_content, errors, dry_run=dry_run)
+
+
+def _get_log_level() -> int:
+    """
+    Determine log level from LOGLEVEL environment variable.
+    Defaults to WARNING if not set.
+    """
+    loglevel_env = os.getenv("LOGLEVEL", "").upper()
+    if loglevel_env:
+        level = getattr(logging, loglevel_env, None)
+        if isinstance(level, int):
+            return level
+    
+    # Default to WARNING if not set
+    return logging.WARNING
+
+
+def main_with_args(repo_path: Path, patch_file: Path, dry_run: bool = False):
+    # Configure logging from LOGLEVEL environment variable
+    log_level = _get_log_level()
+    logging.basicConfig(
+        level=log_level,
+        format='%(message)s',
+        stream=sys.stderr
+    )
+    
     errors: List[str] = []
     
     if not patch_file.exists():
         errors.append(f"Error: Patch file not found: {patch_file}")
     else:
         with tarball_or_repo(repo_path) as repo_dir:
-            success = apply_patch(repo_dir, patch_file, errors)
+            success = apply_patch_file(repo_dir, patch_file, errors, dry_run=dry_run)
             if not success:
                 # Errors already accumulated in errors list
                 pass
     
-    # Print all accumulated errors at the end
+    # Log all accumulated errors at the end
     if errors:
         for error in errors:
-            print(error, file=sys.stderr)
+            if error.startswith("Warning:"):
+                logging.warning(error)
+            else:
+                logging.error(error)
         sys.exit(1)
     return
 
@@ -192,6 +247,11 @@ def main():
         "patch_file",
         type=Path,
         help="Path to patch file in SEARCH/REPLACE format",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Check that patches apply cleanly without actually applying them",
     )
     args = parser.parse_args()
     main_with_args(**vars(args))

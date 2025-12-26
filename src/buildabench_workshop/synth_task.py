@@ -16,6 +16,7 @@ import logging
 import os
 
 from .repolib import tarball_or_repo, get_commit_sha
+from .apply_patch import apply_patch
 
 
 def find_matching_files(repo_root: Path, patterns: List[str]) -> List[Path]:
@@ -154,6 +155,16 @@ def make_feature_request(
     if not result.subject and not result.task_description and not result.patches:
         return None
 
+    # Validate patches by checking if they apply cleanly
+    patch_ok = False
+    patch_errors: List[str] = []
+    if result.patches:
+        try:
+            patch_ok = apply_patch(repo_dir, result.patches, patch_errors, dry_run=True)
+        except Exception as e:
+            patch_errors = [f"Error validating patches: {e}"]
+            patch_ok = False
+
     return {
         "task_id": f"{repo_path.name}/{len(avoid)}",
         "matching_files": [str(file) for file in matching_files],
@@ -164,6 +175,8 @@ def make_feature_request(
         "task_description": result.task_description,
         "patches": result.patches,
         "reasoning": result.reasoning,
+        "patch_ok": patch_ok,
+        "patch_errors": patch_errors,
     }
 
 
