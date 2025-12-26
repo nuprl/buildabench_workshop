@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 import sys
 import json
+import logging
+import os
 
 from .repolib import tarball_or_repo, get_commit_sha
 
@@ -123,46 +125,52 @@ class MakeFeatureRequest(dspy.Signature):
 make_feature_request_cot = dspy.ChainOfThought(MakeFeatureRequest)
 
 
+def _get_log_level() -> int:
+    """
+    Determine log level from LOGLEVEL environment variable.
+    Defaults to WARNING if not set.
+    """
+    loglevel_env = os.getenv("LOGLEVEL", "").upper()
+    if loglevel_env:
+        level = getattr(logging, loglevel_env, None)
+        if isinstance(level, int):
+            return level
+    
+    # Default to WARNING if not set
+    return logging.WARNING
+
+
 def make_feature_request(
-    repo_path: Path, patterns: List[str], avoid: List[str], max_input_tokens: int
+    repo_dir: Path, repo_path: Path, matching_files: List[Path], avoid: List[str], max_input_tokens: int
 ) -> Optional[Dict[str, Any]]:
-    with tarball_or_repo(repo_path) as repo_dir:
-        matching_files = find_matching_files(repo_dir, patterns)
-        if not matching_files:
-            raise ValueError(f"No files found matching patterns: {patterns}")
-        for f in matching_files:
-            print(f"- {f}", file=sys.stderr)
-        print(file=sys.stderr, flush=True)
+    commit_sha = get_commit_sha(repo_dir)
+    formatted_code = format_code_with_headers(matching_files, repo_dir)
+    if len(formatted_code) > max_input_tokens * 3:
+        logging.warning(f"Formatted code is too long, truncating to {max_input_tokens * 3} tokens")
+        formatted_code = formatted_code[:(max_input_tokens * 3)]
+    result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
 
+    # Check if any feature request was generated
+    if not result.subject and not result.task_description and not result.patches:
+        return None
 
-        commit_sha = get_commit_sha(repo_dir)
-        formatted_code = format_code_with_headers(matching_files, repo_dir)
-        if len(formatted_code) > max_input_tokens * 3:
-            print(f"Warning: Formatted code is too long, truncating to {max_input_tokens * 3} tokens", file=sys.stderr, flush=True)
-            formatted_code = formatted_code[:(max_input_tokens * 3)]
-        result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
-
-        # Check if any feature request was generated
-        if not result.subject and not result.task_description and not result.patches:
-            return None
-
-        return {
-            "task_id": f"{repo_path.name}/{len(avoid)}",
-            "matching_files": [str(file) for file in matching_files],
-            "repo": str(repo_path),
-            "commit_sha": commit_sha,
-            # NOTE(arjun): stupid replacement is so that we can copy-paste in the shell.
-            "subject": result.subject.replace("`", ""),
-            "task_description": result.task_description,
-            "patches": result.patches,
-            "reasoning": result.reasoning,
-        }
+    return {
+        "task_id": f"{repo_path.name}/{len(avoid)}",
+        "matching_files": [str(file) for file in matching_files],
+        "repo": str(repo_path),
+        "commit_sha": commit_sha,
+        # NOTE(arjun): stupid replacement is so that we can copy-paste in the shell.
+        "subject": result.subject.replace("`", ""),
+        "task_description": result.task_description,
+        "patches": result.patches,
+        "reasoning": result.reasoning,
+    }
 
 
 def process_single_request(
-    repo_path: Path, patterns: List[str], json_output: bool, avoid: List[str], max_input_tokens: int
+    repo_dir: Path, repo_path: Path, matching_files: List[Path], json_output: bool, avoid: List[str], max_input_tokens: int
 ):
-    result = make_feature_request(repo_path, patterns, avoid, max_input_tokens)
+    result = make_feature_request(repo_dir, repo_path, matching_files, avoid, max_input_tokens)
 
     if result is None:
         print("No feature request generated", file=sys.stderr)
@@ -194,6 +202,14 @@ def main_with_args(
     model: str,
     max_input_tokens: int,
 ):
+    # Configure logging from LOGLEVEL environment variable
+    log_level = _get_log_level()
+    logging.basicConfig(
+        level=log_level,
+        format='%(message)s',
+        stream=sys.stderr
+    )
+    
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
     lm_kwargs = {}
@@ -201,7 +217,7 @@ def main_with_args(
     if flex_processing:
         lm_kwargs["service_tier"] = "flex"
         lm_kwargs["allowed_openai_params"] = ["service_tier"]
-        # Default timeout is 10 minutes. Increase more?
+        # Default timeout is 10 minutes. Increase morpe?
 
     lm = dspy.LM(
         model=model,
@@ -209,10 +225,20 @@ def main_with_args(
     )
     dspy.configure(lm=lm)
 
-    for _ in range(num_candidates):
-        result = process_single_request(repo_path, patterns, json_output, avoid, max_input_tokens)
-        if result and result.get("subject"):
-            avoid.append(result["subject"])
+    # Extract repository once before the loop
+    with tarball_or_repo(repo_path) as repo_dir:
+        # Find and print matching files once if DEBUG logging is enabled
+        matching_files = find_matching_files(repo_dir, patterns)
+        if not matching_files:
+            raise ValueError(f"No files found matching patterns: {patterns}")
+        
+        for f in matching_files:
+            logging.info(f"- {f}")
+        
+        for i in range(num_candidates):
+            result = process_single_request(repo_dir, repo_path, matching_files, json_output, avoid, max_input_tokens)
+            if result and result.get("subject"):
+                avoid.append(result["subject"])
 
 
 def main():
