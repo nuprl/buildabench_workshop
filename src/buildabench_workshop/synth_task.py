@@ -103,7 +103,8 @@ class MakeFeatureRequest(dspy.Signature):
 
     Please note that the *SEARCH/REPLACE* edit REQUIRES PROPER INDENTATION. If you
     would like to add the line '        print(x)', you must fully write that out,
-    with all those spaces before the code.
+    with all those spaces before the code. To edit a file in multiple places, you
+    must produce multiple SEARCH/REPLACE blocks.
 
     Finally, I will give you a list of subjects that I already have interview
     questions for. Pick a subject that is not at all similar to the subjects in the
@@ -190,6 +191,7 @@ def main_with_args(
     avoid: List[str],
     num_candidates: int,
     flex_processing: bool,
+    model: str,
     max_input_tokens: int,
 ):
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
@@ -202,7 +204,7 @@ def main_with_args(
         # Default timeout is 10 minutes. Increase more?
 
     lm = dspy.LM(
-        model="openai/gpt-5.1",
+        model=model,
         **lm_kwargs,
     )
     dspy.configure(lm=lm)
@@ -221,6 +223,12 @@ def main():
         "repo_path",
         type=Path,
         help="Path to tarball containing a bare git repository or an existing repository directory",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="openai/gpt-5.1",
+        help="Model to use for the feature request",
     )
     parser.add_argument(
         "--max-input-tokens",
