@@ -1,7 +1,7 @@
 [project]
-name = "julia-bench2"
+name = "buildabench_workshop"
 version = "0.1.0"
-description = "Add your description here"
+description = "Build-A-Bench Workshop"
 readme = "README.md"
 authors = [
     { name = "Arjun Guha", email = "a.guha@northeastern.edu" }
@@ -10,15 +10,10 @@ requires-python = ">=3.12"
 dependencies = [
     "bounded-subprocess>=2.3.1",
     "dspy>=3.0.4",
-    "web-request-cache",
 ]
 
-[project.scripts]
-julia-bench2 = "julia_bench2:main"
 
 [build-system]
 requires = ["uv_build>=0.9.11,<0.10.0"]
 build-backend = "uv_build"
 
-[tool.uv.sources]
-web-request-cache = { path = "../web_request_cache", editable = true }
