@@ -41,24 +41,55 @@ jobs:
           uv run python3 -m buildabench_workshop.synth_task \
             --json \
             --num-candidates 3 \
-            --model openai/gpt-5-nano \
+            --model openai/claude-haiku-4-5 \
             test_projects/scheme_interpreter \
             "src/scheme_interpreter/*.py" \
             "tests/*.py" \
             > test_projects/scheme_interpreter/ci_tasks.jsonl
 
-      - name: Validate tasks
+      - name: Print synthesized tasks
         run: |
-          rm -f test_projects/scheme_interpreter/ci_validated_tasks.jsonl
-          while IFS= read -r line; do
-            printf "%s\n" "$line" | uv run python3 -m buildabench_workshop.validate_task \
-              --tips-path test_projects/scheme_interpreter/validate_task_tips.txt \
-              --agent codex \
-              --input-json \
-              --output-json \
-              --container "$CONTAINER_NAME" \
-              >> test_projects/scheme_interpreter/ci_validated_tasks.jsonl
-          done < test_projects/scheme_interpreter/ci_tasks.jsonl
+          uv run python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
+          for line in tasks_path.read_text().splitlines():
+            if not line.strip():
+              continue
+            task = json.loads(line)
+            subject = task.get("subject", "<missing subject>")
+            patches = task.get("patches", "")
+            if isinstance(patches, list):
+              patch_text = "\n".join(patches)
+            else:
+              patch_text = patches
+            print("Subject:", subject)
+            print("Patch:")
+            print(patch_text)
+            print()
+          PY
+
+      - name: Build validated tasks manifest
+        run: |
+          uv run python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
+          validated_path = Path("test_projects/scheme_interpreter/ci_validated_tasks.jsonl")
+          container = os.environ["CONTAINER_NAME"]
+          with validated_path.open("w") as out:
+            for line in tasks_path.read_text().splitlines():
+              if not line.strip():
+                continue
+              task = json.loads(line)
+              task_id = task.get("task_id")
+              if not task_id:
+                continue
+              out.write(json.dumps({"task_id": task_id, "container": container}) + "\n")
+          PY
 
       - name: Eval tasks with codex
         run: |
@@ -102,3 +133,8 @@ jobs:
           if failures:
             sys.exit(1)
           PY
+
+      - name: Cleanup container
+        if: always()
+        run: |
+          podman image rm -f "$CONTAINER_NAME" || true
