@@ -18,7 +18,9 @@ jobs:
     runs-on: self-hosted
     env:
       OPENAI_MODEL: openai/claude-haiku-4-5
-      CONTAINER_NAME: env_agent__scheme_interpreter_ci
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+      CONTAINER_NAME: env_agent__scheme_interpreter_${{ github.run_id }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
