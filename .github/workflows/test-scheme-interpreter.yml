@@ -20,4 +20,4 @@ jobs:
 
       - name: Run Scheme interpreter tests
         working-directory: test_projects/scheme_interpreter
-        run: uv run python -m unittest discover -s tests
+        run: uv run python3 -m pytest
