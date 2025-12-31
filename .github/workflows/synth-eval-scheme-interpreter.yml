@@ -1,0 +1,102 @@
+name: synth-eval-scheme-interpreter
+
+on:
+  push:
+    paths:
+      - ".github/workflows/synth-eval-scheme-interpreter.yml"
+      - "test_projects/scheme_interpreter/**"
+      - "src/buildabench_workshop/**"
+  pull_request:
+    paths:
+      - ".github/workflows/synth-eval-scheme-interpreter.yml"
+      - "test_projects/scheme_interpreter/**"
+      - "src/buildabench_workshop/**"
+  workflow_dispatch:
+
+jobs:
+  synth-eval:
+    runs-on: self-hosted
+    env:
+      OPENAI_MODEL: openai/claude-haiku-4-5
+      CONTAINER_NAME: env_agent__scheme_interpreter_ci
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Add Codex CLI to PATH
+        run: echo "/home/ci/codexcli/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Build container via env_agent
+        run: |
+          uv run python3 -m buildabench_workshop.env_agent \
+            --repo test_projects/scheme_interpreter \
+            --tips-path test_projects/scheme_interpreter/env_agent_tips.txt \
+            --agent codex \
+            --container "$CONTAINER_NAME"
+
+      - name: Synthesize 3 tasks
+        run: |
+          uv run python3 -m buildabench_workshop.synth_task \
+            --json \
+            --num-candidates 3 \
+            --model openai/gpt-5-nano \
+            test_projects/scheme_interpreter \
+            "src/scheme_interpreter/*.py" \
+            "tests/*.py" \
+            > test_projects/scheme_interpreter/ci_tasks.jsonl
+
+      - name: Validate tasks
+        run: |
+          rm -f test_projects/scheme_interpreter/ci_validated_tasks.jsonl
+          while IFS= read -r line; do
+            printf "%s\n" "$line" | uv run python3 -m buildabench_workshop.validate_task \
+              --tips-path test_projects/scheme_interpreter/validate_task_tips.txt \
+              --agent codex \
+              --input-json \
+              --output-json \
+              --container "$CONTAINER_NAME" \
+              >> test_projects/scheme_interpreter/ci_validated_tasks.jsonl
+          done < test_projects/scheme_interpreter/ci_tasks.jsonl
+
+      - name: Eval tasks with codex
+        run: |
+          uv run python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
+          validated_path = Path("test_projects/scheme_interpreter/ci_validated_tasks.jsonl")
+
+          failures = 0
+
+          with tasks_path.open() as f:
+            for line in f:
+              if not line.strip():
+                continue
+              task = json.loads(line)
+              task_id = task.get("task_id")
+              subject = task.get("subject", "<missing subject>")
+              if not task_id:
+                print(f"{subject}: FAIL (missing task_id)")
+                failures += 1
+                continue
+              result = subprocess.run(
+                [
+                  "uv", "run", "python3", "-m", "buildabench_workshop.eval_agent_unvalidated",
+                  "--tasks", str(tasks_path),
+                  "--validated-tasks", str(validated_path),
+                  "--task-id", task_id,
+                  "--agent-name", "codex",
+                ],
+                text=True,
+              )
+              status = "PASS" if result.returncode == 0 else "FAIL"
+              print(f"{subject}: {status}")
+              if result.returncode != 0:
+                failures += 1
+
+          if failures:
+            sys.exit(1)
+          PY
