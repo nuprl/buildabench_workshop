@@ -8,26 +8,28 @@ Usage:
 
 python3 -m buildabench_workshop.eval_agent_unvalidated \
     --tasks TASK_FILE \
+    --validated-tasks VALIDATED_TASK_FILE \
     --task-id TASK_ID \
-    --agent-name AGENT_NAME \
-    --container CONTAINER_NAME
+    --agent-name AGENT_NAME
 
-See synth_task.py for the format of TASK_FILE. The TASK_ID is the unique key that selects the
-right row from the file. The container name must be provided as a command-line argument.
+See synth_task.py for the format of TASK_FILE and validate_task.py for the format of
+VALIDATED_TASK_FILE. The TASK_ID is the unique key that selects the right row from both files.
+The container name is read from the validated_tasks_file.
 
 Approach:
 
-1. Assert that the Podman image exists.
-2. Extract the repository (named in the task row) to a temporary directory
+1. Load the container name from the validated task data.
+2. Assert that the Podman image exists.
+3. Extract the repository (named in the task row) to a temporary directory
    using repolib.
-3. Apply the task patch (patches from the task row) to the repository using
+4. Apply the task patch (patches from the task row) to the repository using
    SEARCH/REPLACE format.
-4. Run the agent (using anyagent) on the temporary directory. It can edit
+5. Run the agent (using anyagent) on the temporary directory. It can edit
    any file, but cannot run any code. The prompt for the agent is
    task_description from the task row.
-5. Run the container with the temporary directory mounted to /repo.
+6. Run the container with the temporary directory mounted to /repo.
    (See env_agent.py to see how this is expected to work.)
-6. Print to stdout a JSON object with the agent log, the container run log,
+7. Print to stdout a JSON object with the agent log, the container run log,
    exit codes from the various steps, and a git diff on the working copy of
    the repository.
 """
@@ -108,9 +110,9 @@ def get_git_diff(repo_dir: Path) -> str | None:
 
 def main_with_args(
     tasks_file: Path,
+    validated_tasks_file: Path,
     task_id: str,
     agent_name: str,
-    container: str,
     timeout: int = 300,
     working_path: Optional[Path] = None,
 ):
@@ -133,7 +135,7 @@ def main_with_args(
         "error": None,
     }
     
-    # Step 1: Load task data
+    # Step 1: Load task and validated task data
     try:
         task_data = load_jsonl_task(tasks_file, task_id)
     except Exception as e:
@@ -141,6 +143,19 @@ def main_with_args(
     
     if not task_data:
         raise EvalAgentError(f"Task ID {task_id} not found in tasks file")
+    
+    try:
+        validated_task_data = load_jsonl_task(validated_tasks_file, task_id)
+    except Exception as e:
+        raise EvalAgentError(f"Error reading validated tasks file: {e}") from e
+    
+    if not validated_task_data:
+        raise EvalAgentError(f"Task ID {task_id} not found in validated tasks file")
+    
+    # Extract container name from validated task data
+    container = validated_task_data.get("container")
+    if not container:
+        raise EvalAgentError("Validated task data missing 'container' field")
     
     # Step 2: Assert that the Podman image exists
     if not container_exists(container):
@@ -197,7 +212,7 @@ def main_with_args(
             # Git commit failures are not fatal, just log them
             result["error"] = f"Failed to commit applied patch: {e}"
         
-        # Step 4: Run the agent
+        # Step 5: Run the agent
         agent_instance = agent(agent_name)
         agent_instance.prompt(task_description)
         agent_instance.cwd(repo_dir)
@@ -208,13 +223,13 @@ def main_with_args(
         result["agent_exit_code"] = agent_exit_code
         result["agent_log"] = may_read(log_file)
         
-        # Step 5: Run the container
+        # Step 6: Run the container
         container_exit_code, container_output, container_timed_out = run_container(repo_dir, container, timeout)
         result["container_exit_code"] = container_exit_code
         result["container_log"] = container_output
         result["container_timed_out"] = container_timed_out
         
-        # Step 6: Get git diff
+        # Step 7: Get git diff
         result["git_diff"] = get_git_diff(repo_dir)
     
     return result
@@ -223,9 +238,9 @@ def main_with_args(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tasks", type=Path, required=True, dest="tasks_file", help="Path to tasks JSONL file")
+    parser.add_argument("--validated-tasks", type=Path, required=True, dest="validated_tasks_file", help="Path to validated tasks JSONL file")
     parser.add_argument("--task-id", type=str, required=True, help="Task ID to evaluate")
     parser.add_argument("--agent-name", type=str, required=True, help="Agent name (e.g., 'claude' or 'codex')")
-    parser.add_argument("--container", type=str, required=True, help="Container name to use for running tests")
     parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds for container execution (default: 300)")
     parser.add_argument("--working-path", type=Path, default=None, dest="working_path", help="Persistent directory to extract repository to (default: use temporary directory)")
     args = parser.parse_args()
@@ -233,9 +248,9 @@ def main():
     try:
         result = main_with_args(
             tasks_file=args.tasks_file,
+            validated_tasks_file=args.validated_tasks_file,
             task_id=args.task_id,
             agent_name=args.agent_name,
-            container=args.container,
             timeout=args.timeout,
             working_path=args.working_path,
         )
