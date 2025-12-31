@@ -243,6 +243,12 @@ def main():
     parser.add_argument("--agent-name", type=str, required=True, help="Agent name (e.g., 'claude' or 'codex')")
     parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds for container execution (default: 300)")
     parser.add_argument("--working-path", type=Path, default=None, dest="working_path", help="Persistent directory to extract repository to (default: use temporary directory)")
+    parser.add_argument(
+        "-s",
+        "--summary",
+        action="store_true",
+        help="Print a human-readable pass/fail summary instead of JSON output",
+    )
     args = parser.parse_args()
     
     try:
@@ -258,8 +264,12 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Print JSON result to stdout
-    print(json.dumps(result))
+    # Print output to stdout
+    if args.summary:
+        status = "PASS" if result.get("agent_exit_code", 1) == 0 and result.get("container_exit_code", 1) == 0 and not result.get("container_timed_out", False) else "FAIL"
+        print(status)
+    else:
+        print(json.dumps(result))
     
     # Exit with non-zero code if agent or container failed (including timeout)
     if result.get("agent_exit_code", 0) != 0 or result.get("container_exit_code", 0) != 0 or result.get("container_timed_out", False):
@@ -270,4 +280,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

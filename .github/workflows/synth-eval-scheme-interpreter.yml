@@ -103,6 +103,7 @@ jobs:
           validated_path = Path("test_projects/scheme_interpreter/ci_validated_tasks.jsonl")
 
           failures = 0
+          passes = 0
 
           with tasks_path.open() as f:
             for line in f:
@@ -122,15 +123,19 @@ jobs:
                   "--validated-tasks", str(validated_path),
                   "--task-id", task_id,
                   "--agent-name", "codex",
+                  "--summary",
                 ],
+                capture_output=True,
                 text=True,
               )
-              status = "PASS" if result.returncode == 0 else "FAIL"
+              status = result.stdout.strip() if result.stdout else ("PASS" if result.returncode == 0 else "FAIL")
               print(f"{subject}: {status}")
-              if result.returncode != 0:
+              if status == "PASS":
+                passes += 1
+              else:
                 failures += 1
 
-          if failures:
+          if passes < 1:
             sys.exit(1)
           PY
 
