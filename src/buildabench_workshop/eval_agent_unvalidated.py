@@ -124,6 +124,7 @@ def main_with_args(
     # Initialize result dictionary with mostly None values
     result = {
         "task_id": task_id,
+        "subject": None,
         "agent_log": None,
         "container_log": None,
         "git_diff": None,
@@ -143,6 +144,7 @@ def main_with_args(
     
     if not task_data:
         raise EvalAgentError(f"Task ID {task_id} not found in tasks file")
+    result["subject"] = task_data.get("subject")
     
     try:
         validated_task_data = load_jsonl_task(validated_tasks_file, task_id)
@@ -267,7 +269,9 @@ def main():
     # Print output to stdout
     if args.summary:
         status = "PASS" if result.get("agent_exit_code", 1) == 0 and result.get("container_exit_code", 1) == 0 and not result.get("container_timed_out", False) else "FAIL"
-        print(status)
+        subject = result.get("subject") or "<missing subject>"
+        task_id = result.get("task_id") or "<missing task_id>"
+        print(f"{task_id}: {subject}: {status}")
     else:
         print(json.dumps(result))
     
