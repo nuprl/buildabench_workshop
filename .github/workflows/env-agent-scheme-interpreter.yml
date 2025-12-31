@@ -22,6 +22,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Add Codex CLI to PATH
+        run: echo "/home/ci/codexcli/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Run env_agent for scheme_interpreter
         run: |
           uv run python3 -m buildabench_workshop.env_agent \
