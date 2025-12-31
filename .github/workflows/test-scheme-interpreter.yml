@@ -1,0 +1,23 @@
+name: test-scheme-interpreter
+
+on:
+  push:
+    paths:
+      - ".github/workflows/test-scheme-interpreter.yml"
+      - "test_projects/scheme_interpreter/**"
+  pull_request:
+    paths:
+      - ".github/workflows/test-scheme-interpreter.yml"
+      - "test_projects/scheme_interpreter/**"
+  workflow_dispatch:
+
+jobs:
+  scheme-interpreter-tests:
+    runs-on: self-hosted
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run Scheme interpreter tests
+        working-directory: test_projects/scheme_interpreter
+        run: uv run python -m unittest discover -s tests
