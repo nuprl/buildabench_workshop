@@ -27,7 +27,6 @@ Approach:
 import argparse
 import sys
 import json
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -38,21 +37,6 @@ from .apply_patch import apply_patch
 class EvalPatchError(Exception):
     """Base exception for eval_patch_only errors."""
     pass
-
-
-def get_git_diff(repo_dir: Path) -> str | None:
-    """Get the git diff of the working copy."""
-    try:
-        result = subprocess.run(
-            ["git", "diff"],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
 
 
 def check_patch_for_task(task_data: dict, working_path: Optional[Path] = None) -> dict:
@@ -68,7 +52,6 @@ def check_patch_for_task(task_data: dict, working_path: Optional[Path] = None) -
         "task_id": task_id,
         "src_patch_apply_errors": None,
         "src_patch_apply_success": None,
-        "git_diff": None,
         "error": None,
     }
     
@@ -101,9 +84,6 @@ def check_patch_for_task(task_data: dict, working_path: Optional[Path] = None) -
             
             if not patch_success:
                 result["error"] = f"Failed to apply patches: {result['src_patch_apply_errors']}"
-            
-            # Get git diff
-            result["git_diff"] = get_git_diff(repo_dir)
     except Exception as e:
         result["error"] = f"Error processing task: {e}"
         result["src_patch_apply_success"] = False
@@ -158,8 +138,12 @@ def main():
     for task_data in tasks:
         result = check_patch_for_task(task_data, working_path=args.working_path)
         
-        # Print JSON result to stdout (one per line)
-        print(json.dumps(result))
+        # Print JSON result to stdout (one per line) - only task_id and success boolean
+        output = {
+            "task_id": result["task_id"],
+            "src_patch_apply_success": result.get("src_patch_apply_success", False)
+        }
+        print(json.dumps(output))
         
         # Track if any patch failed
         if not result.get("src_patch_apply_success", False):

@@ -55,19 +55,38 @@ def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str
             i += 1
             continue
         
-        # Look back 1 line for the file path
-        if i == 0:
-            errors.append("Warning: SEARCH marker found at start of file, no file path available, skipping")
+        # Look back to find the file path (### line), skipping blank lines and descriptive text
+        file_path = None
+        lookback_idx = i - 1
+        while lookback_idx >= 0:
+            path_line = lines[lookback_idx].strip()
+            # Match any number of # characters (at least 3) followed by whitespace and the path
+            if path_line.startswith('#'):
+                # Count leading # characters
+                hash_count = 0
+                for char in path_line:
+                    if char == '#':
+                        hash_count += 1
+                    else:
+                        break
+                # If we have at least 3 # characters, treat it as a file path marker
+                if hash_count >= 3:
+                    # Remove all leading # characters and whitespace
+                    file_path = path_line.lstrip('#').strip()
+                    break
+                else:
+                    # Less than 3 # characters, treat as descriptive text and continue looking back
+                    lookback_idx -= 1
+            elif path_line:  # Non-empty line that's not a file path
+                # This might be descriptive text, continue looking back
+                lookback_idx -= 1
+            else:  # Blank line
+                lookback_idx -= 1
+        
+        if file_path is None:
+            errors.append("Warning: SEARCH marker found but no file path (### line) found before it, skipping")
             i += 1
             continue
-        path_line = lines[i - 1].strip()
-        
-        # Remove leading ### characters if present
-        if path_line.startswith('###'):
-            file_path = path_line[3:].strip()
-        else:
-            # No ### prefix, use the line as-is
-            file_path = path_line
         
         i += 1  # Skip SEARCH line
         
