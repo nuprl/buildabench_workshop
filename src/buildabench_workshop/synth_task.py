@@ -18,12 +18,27 @@ import os
 from .repolib import tarball_or_repo, get_commit_sha
 from .apply_patch import apply_patch
 
+def _get_log_level() -> int:
+    """
+    Determine log level from LOGLEVEL environment variable.
+    Defaults to WARNING if not set.
+    """
+    loglevel_env = os.getenv("LOGLEVEL", "").upper()
+    if loglevel_env:
+        level = getattr(logging, loglevel_env, None)
+        if isinstance(level, int):
+            return level
+
+    # Default to WARNING if not set
+    return logging.WARNING
+
 
 def find_matching_files(repo_root: Path, patterns: List[str]) -> List[Path]:
     matching_files = []
     for pat in patterns:
         matching_files.extend(repo_root.glob(pat))
     return sorted(matching_files)
+
 
 def format_code_with_headers(files: List[Path], repo_root: Path) -> str:
     """
@@ -122,94 +137,117 @@ class MakeFeatureRequest(dspy.Signature):
     )
     patches: str = dspy.OutputField()
 
+class NormalizePatch(dspy.Signature):
+    """
+    I had originally asked for a result in the following format. But, I got some
+    text that is close, but not quite right. Can you clean it up so that it
+    is formatted exactly as I asked for. Do not change any of the context or
+    the file names.
+
+    Each chunk should have the following lines:
+
+    1. The file path
+    2. The verbatim string block: <<<<<<< SEARCH
+    3. A contiguous chunk of lines to search for in the existing source code
+    4. The dividing line: =======
+    5. The lines to replace into the source code
+    6. The end of the replace block: >>>>>>> REPLACE
+
+    Here is an example:
+
+    ```python
+    ### mathweb/flask/app.py
+    <<<<<<< SEARCH
+    from flask import Flask
+    =======
+    import math
+    from flask import Flask
+    >>>>>>> REPLACE
+    ```
+
+    Notice that the separators are exactly 7 characters and that the filename
+    is prefixed with ###  .
+    """
+    original: str = dspy.InputField()
+    normalized: str = dspy.OutputField()
+
 
 make_feature_request_cot = dspy.ChainOfThought(MakeFeatureRequest)
 
-
-def _get_log_level() -> int:
+def normalize_reward(args, normalized_result):
     """
-    Determine log level from LOGLEVEL environment variable.
-    Defaults to WARNING if not set.
+    The "reward function" that determines if patch produced by normalize_patch
+    applies to a repository.
     """
-    loglevel_env = os.getenv("LOGLEVEL", "").upper()
-    if loglevel_env:
-        level = getattr(logging, loglevel_env, None)
-        if isinstance(level, int):
-            return level
-    
-    # Default to WARNING if not set
-    return logging.WARNING
+    repo_dir = args["repo_dir"]
+    if not normalized_result.normalized:
+        return 0.0
+    if not apply_patch(repo_dir, normalized_result.normalized, [], dry_run=True):
+        return 0.0
+    return 1.0
 
 
 def make_feature_request(
-    repo_dir: Path, repo_path: Path, matching_files: List[Path], avoid: List[str], max_input_tokens: int, num_attempts: int
-) -> Optional[Dict[str, Any]]:
+    repo_dir: Path,
+    repo_path: Path,
+    matching_files: List[Path],
+    json_output: bool,
+    avoid: List[str],
+    max_input_tokens: int,
+    num_attempts: int,
+) -> Dict[str, Any]:
+    """
+    The working directory where file operations are performed is repo_dir. This is
+    the actual extracted or cloned repository, which may be a temporary directory
+    if the original input was a tarball. The original input path, be it a tarball
+    or a directory, is repo_path. This serves as the identifier in our output,
+    preserving the form in which the repository was first presented to us.
+    """
+
+    normalize_patch = dspy.Refine(
+        module=dspy.Predict(NormalizePatch),
+        N=num_attempts,
+        reward_fn=normalize_reward,
+        threshold=1.0,
+    )
+
     commit_sha = get_commit_sha(repo_dir)
     formatted_code = format_code_with_headers(matching_files, repo_dir)
     if len(formatted_code) > max_input_tokens * 3:
-        logging.warning(f"Formatted code is too long, truncating to {max_input_tokens * 3} tokens")
-        formatted_code = formatted_code[:(max_input_tokens * 3)]
+        logging.warning(
+            f"Formatted code is too long, truncating to {max_input_tokens * 3} tokens"
+        )
+        formatted_code = formatted_code[: (max_input_tokens * 3)]
 
-    # Validate patches by checking if they apply cleanly
-    patch_ok = False
+    result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
+    patches = result.patches
+    if not apply_patch(repo_dir, patches, [], dry_run=True):
+        patches = normalize_patch(original=patches, repo_dir=repo_dir).normalized
 
-    for _ in range(num_attempts):
-        
-        result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
-
-        # Check if any feature request was generated
-        if not result.subject and not result.task_description and not result.patches:
-            continue
-
-        patch_errors: List[str] = []
-        if result.patches:
-            try:
-                patch_ok = apply_patch(repo_dir, result.patches, patch_errors, dry_run=True)
-            except Exception as e:
-                patch_errors = [f"Error validating patches: {e}"]
-                patch_ok = False
-
-        if patch_ok:
-            break
-        
-
-    return {
+    result_dict = {
         "task_id": f"{repo_path.name}/{len(avoid)}",
         "matching_files": [str(file) for file in matching_files],
         "repo": str(repo_path),
         "commit_sha": commit_sha,
         "subject": result.subject,
         "task_description": result.task_description,
-        "patches": result.patches,
+        "patches": patches,
         "reasoning": result.reasoning,
-        "patch_ok": patch_ok,
-        "patch_errors": patch_errors,
+        "patch_ok": apply_patch(repo_dir, patches, [], dry_run=True),
     }
 
-
-def process_single_request(
-    repo_dir: Path, repo_path: Path, matching_files: List[Path], json_output: bool, avoid: List[str], max_input_tokens: int, num_attempts: int
-):
-    result = make_feature_request(repo_dir, repo_path, matching_files, avoid, max_input_tokens, num_attempts)
-
-    if result is None:
-        print("No feature request generated", file=sys.stderr)
-        return None
-
-    if json_output:
-        print(json.dumps(result))
-    else:
-        if result["subject"]:
-            print(f"Subject: {result['subject']}\n")
-        if result["task_description"]:
-            print(f"Task Description:\n{result['task_description']}\n")
-        if result["patches"]:
+    if not json_output:
+        if result_dict["subject"]:
+            print(f"Subject: {result_dict['subject']}\n")
+        if result_dict["task_description"]:
+            print(f"Task Description:\n{result_dict['task_description']}\n")
+        if result_dict["patches"]:
             print("Patches:")
-            for patch in result["patches"]:
+            for patch in result_dict["patches"]:
                 print(patch)
                 print()
 
-    return result
+    return result_dict
 
 
 def main_with_args(
@@ -222,15 +260,12 @@ def main_with_args(
     model: str,
     max_input_tokens: int,
     num_attempts: int,
+    max_tokens: int,
 ):
     # Configure logging from LOGLEVEL environment variable
     log_level = _get_log_level()
-    logging.basicConfig(
-        level=log_level,
-        format='%(message)s',
-        stream=sys.stderr
-    )
-    
+    logging.basicConfig(level=log_level, format="%(message)s", stream=sys.stderr)
+
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
     lm_kwargs = {}
@@ -242,6 +277,7 @@ def main_with_args(
 
     lm = dspy.LM(
         model=model,
+        max_tokens=max_tokens,
         **lm_kwargs,
     )
     dspy.configure(lm=lm)
@@ -252,14 +288,30 @@ def main_with_args(
         matching_files = find_matching_files(repo_dir, patterns)
         if not matching_files:
             raise ValueError(f"No files found matching patterns: {patterns}")
-        
+
         for f in matching_files:
             logging.info(f"- {f}")
-        
+
+        results = []
         for i in range(num_candidates):
-            result = process_single_request(repo_dir, repo_path, matching_files, json_output, avoid, max_input_tokens, num_attempts)
-            if result and result.get("subject"):
-                avoid.append(result["subject"])
+            result = make_feature_request(
+                repo_dir,
+                repo_path,
+                matching_files,
+                json_output,
+                avoid,
+                max_input_tokens,
+                num_attempts,
+            )
+            if not result["patch_ok"]:
+                continue
+
+            avoid.append(result["subject"])
+            results.append(result)
+
+        if json_output:
+            output = {"repo": str(repo_path), "tasks": results}
+            print(json.dumps(output))
 
 
 def main():
@@ -311,7 +363,7 @@ def main():
     parser.add_argument(
         "--flex-processing",
         action="store_true",
-        help="Enable flex processing (https://platform.openai.com/docs/guides/flex-processing)"
+        help="Enable flex processing (https://platform.openai.com/docs/guides/flex-processing)",
     )
     parser.add_argument(
         "--num-attempts",
@@ -319,6 +371,13 @@ def main():
         dest="num_attempts",
         default=3,
         help="Number of attempts to generate a valid feature request (default: 3)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        dest="max_tokens",
+        default=4096,
+        help="Maximum number of output tokens to allow for each task",
     )
     args = parser.parse_args()
     main_with_args(**vars(args))

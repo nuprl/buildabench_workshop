@@ -12,7 +12,6 @@ from collections import defaultdict
 import sys
 import logging
 import os
-import re
 
 from .repolib import tarball_or_repo
 
@@ -20,118 +19,84 @@ from .repolib import tarball_or_repo
 def parse_patch_content(patch_content: str, errors: List[str]) -> List[Tuple[str, str, str]]:
     """
     Parse patch content in the SEARCH/REPLACE format.
-    
-    Format:
-    ### file/path.py  (optional ### prefix)
-    <<<<<<< SEARCH  (variable number of < characters, minimum 2)
+
+    Format (as specified in synth_task.py):
+    ### file/path.py
+    <<<<<<< SEARCH
     [search content]
-    ===  (3 or more = characters, nothing else on that line, optional)
-    [replace content]  (only present if divider is present)
-    >>>>>>> REPLACE  (variable number of > characters, minimum 2)
-    
-    If the divider is missing, the block concludes immediately with the REPLACE marker,
-    meaning the searched text is deleted (replace_text is empty).
-    
-    Note: The number of > characters in REPLACE marker does not need to match
-    the number of < characters in SEARCH marker.
-    
+    =======
+    [replace content]
+    >>>>>>> REPLACE
+
     Returns a list of tuples: (file_path, search_text, replace_text)
     """
     chunks = []
     lines = patch_content.splitlines(keepends=True)
     i = 0
-    
-    # Regex pattern to match SEARCH marker: at least 2 < characters followed by whitespace and SEARCH
-    search_pattern = re.compile(r'^(\s*)(<{2,})\s+SEARCH')
-    # Regex pattern to match REPLACE marker: at least 2 > characters followed by whitespace and REPLACE
-    replace_pattern = re.compile(r'^(\s*)(>{2,})\s+REPLACE')
-    # Regex pattern to match divider: 3 or more = characters, nothing else on the line
-    divider_pattern = re.compile(r'^={3,}$')
-    
+
     while i < len(lines):
-        # Look for SEARCH marker using regex
-        search_match = search_pattern.match(lines[i].strip())
-        if not search_match:
+        # Look for SEARCH marker (exactly 7 < characters)
+        if lines[i].strip() != '<<<<<<< SEARCH':
             i += 1
             continue
-        
-        # Look back to find the file path (### line), skipping blank lines and descriptive text
+
+        # Look back to find the file path (### line)
         file_path = None
         lookback_idx = i - 1
         while lookback_idx >= 0:
             path_line = lines[lookback_idx].strip()
-            # Match any number of # characters (at least 3) followed by whitespace and the path
-            if path_line.startswith('#'):
-                # Count leading # characters
-                hash_count = 0
-                for char in path_line:
-                    if char == '#':
-                        hash_count += 1
-                    else:
-                        break
-                # If we have at least 3 # characters, treat it as a file path marker
-                if hash_count >= 3:
-                    # Remove all leading # characters and whitespace
-                    file_path = path_line.lstrip('#').strip()
-                    break
-                else:
-                    # Less than 3 # characters, treat as descriptive text and continue looking back
-                    lookback_idx -= 1
+            # Must have exactly 3 # characters followed by space
+            if path_line.startswith('### '):
+                file_path = path_line[4:].strip()  # Remove '### ' prefix
+                break
             elif path_line:  # Non-empty line that's not a file path
-                # This might be descriptive text, continue looking back
+                # Stop searching if we hit non-blank, non-file-path content
                 lookback_idx -= 1
             else:  # Blank line
                 lookback_idx -= 1
-        
+
         if file_path is None:
-            errors.append("Warning: SEARCH marker found but no file path (### line) found before it, skipping")
+            errors.append("Error: SEARCH marker found but no file path (### line) found before it, skipping")
             i += 1
             continue
-        
+
         i += 1  # Skip SEARCH line
-        
-        # Collect search text until divider or REPLACE marker
+
+        # Collect search text until divider
         search_lines = []
         while i < len(lines):
-            stripped_line = lines[i].strip()
-            # Check if this is a divider or REPLACE marker
-            if divider_pattern.match(stripped_line) or replace_pattern.match(stripped_line):
+            if lines[i].strip() == '=======':
                 break
             search_lines.append(lines[i])
             i += 1
-        
+
         if i >= len(lines):
-            errors.append(f"Warning: No divider or REPLACE marker found for {file_path}, skipping")
+            errors.append(f"Error: No divider (=======) found for {file_path}, skipping")
             break
-        
-        # Check if we hit a divider or REPLACE marker
-        stripped_line = lines[i].strip()
-        if divider_pattern.match(stripped_line):
-            # Divider found - skip it and collect replace text
-            i += 1  # Skip divider line
-            
-            # Collect replace text until REPLACE marker
-            replace_lines = []
-            while i < len(lines) and not replace_pattern.match(lines[i].strip()):
-                replace_lines.append(lines[i])
-                i += 1
-                
-            if i >= len(lines):
-                errors.append(f"Warning: No REPLACE marker found for {file_path}, skipping")
+
+        # Divider found - skip it and collect replace text
+        i += 1  # Skip divider line
+
+        # Collect replace text until REPLACE marker
+        replace_lines = []
+        while i < len(lines):
+            if lines[i].strip() == '>>>>>>> REPLACE':
                 break
-            
-            i += 1  # Skip REPLACE line
-            replace_text = ''.join(replace_lines)
-        else:
-            # No divider - REPLACE marker found immediately, meaning deletion
-            i += 1  # Skip REPLACE line
-            replace_text = ''  # Empty replace text means deletion
-        
+            replace_lines.append(lines[i])
+            i += 1
+
+        if i >= len(lines):
+            errors.append(f"Error: No REPLACE marker (>>>>>>> REPLACE) found for {file_path}, skipping")
+            break
+
+        i += 1  # Skip REPLACE line
+
         # Join lines, preserving exact content (including trailing newlines/spaces)
         search_text = ''.join(search_lines)
-        
+        replace_text = ''.join(replace_lines)
+
         chunks.append((file_path, search_text, replace_text))
-    
+
     return chunks
 
 
