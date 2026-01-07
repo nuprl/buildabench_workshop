@@ -17,7 +17,7 @@ jobs:
   synth-eval:
     runs-on: self-hosted
     env:
-      OPENAI_MODEL: openai/claude-haiku-4-5
+      OPENAI_MODEL: openai/boa
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
       CONTAINER_NAME: env_agent__scheme_interpreter_${{ github.run_id }}
@@ -41,7 +41,7 @@ jobs:
           uv run python3 -m buildabench_workshop.synth_task \
             --json \
             --num-candidates 3 \
-            --model openai/claude-haiku-4-5 \
+            --model openai/boa \
             test_projects/scheme_interpreter \
             "src/scheme_interpreter/*.py" \
             "tests/*.py" \
