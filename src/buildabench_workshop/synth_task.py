@@ -292,7 +292,6 @@ def main_with_args(
         for f in matching_files:
             logging.info(f"- {f}")
 
-        results = []
         for i in range(num_candidates):
             result = make_feature_request(
                 repo_dir,
@@ -307,11 +306,8 @@ def main_with_args(
                 continue
 
             avoid.append(result["subject"])
-            results.append(result)
-
-        if json_output:
-            output = {"repo": str(repo_path), "tasks": results}
-            print(json.dumps(output))
+            if json_output:
+                print(json.dumps(result))
 
 
 def main():
