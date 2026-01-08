@@ -45,7 +45,7 @@ from bounded_subprocess import run as bounded_run
 from .agentlib import container_exists
 from .repolib import tarball_or_repo
 from .anyagent import agent
-from .apply_patch import apply_patch
+from .search_replace_patch import SearchReplacePatch
 
 
 class EvalAgentError(Exception):
@@ -185,13 +185,12 @@ def main_with_args(
         print(f"Working directory is {repo_dir}", file=sys.stderr, flush=True)
         
         # Apply patches using SEARCH/REPLACE format
-        errors: list[str] = []
-        patch_success = apply_patch(repo_dir, patches, errors, dry_run=False)
+        patch = SearchReplacePatch.from_string(patches)
+        patch_success = patch is not None and patch.apply(repo_dir, dry_run=False)
         result["src_patch_apply_success"] = patch_success
-        result["src_patch_apply_errors"] = "\n".join(errors) if errors else None
         
         if not patch_success:
-            result["error"] = f"Failed to apply patches: {result['src_patch_apply_errors']}"
+            result["error"] = "Failed to apply patches"
             # Skip agent and container steps if patch failed
             result["git_diff"] = get_git_diff(repo_dir)
             return result

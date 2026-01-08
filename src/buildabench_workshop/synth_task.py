@@ -16,7 +16,7 @@ import logging
 import os
 
 from .repolib import tarball_or_repo, get_commit_sha
-from .apply_patch import apply_patch
+from .search_replace_patch import SearchReplacePatch
 
 def _get_log_level() -> int:
     """
@@ -174,6 +174,7 @@ class NormalizePatch(dspy.Signature):
 
 make_feature_request_cot = dspy.ChainOfThought(MakeFeatureRequest)
 
+
 def normalize_reward(args, normalized_result):
     """
     The "reward function" that determines if patch produced by normalize_patch
@@ -182,7 +183,8 @@ def normalize_reward(args, normalized_result):
     repo_dir = args["repo_dir"]
     if not normalized_result.normalized:
         return 0.0
-    if not apply_patch(repo_dir, normalized_result.normalized, [], dry_run=True):
+    patch = SearchReplacePatch.from_string(normalized_result.normalized)
+    if patch is None or not patch.apply(repo_dir, dry_run=True):
         return 0.0
     return 1.0
 
@@ -195,7 +197,7 @@ def make_feature_request(
     avoid: List[str],
     max_input_tokens: int,
     num_attempts: int,
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """
     The working directory where file operations are performed is repo_dir. This is
     the actual extracted or cloned repository, which may be a temporary directory
@@ -220,9 +222,18 @@ def make_feature_request(
         formatted_code = formatted_code[: (max_input_tokens * 3)]
 
     result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
-    patches = result.patches
-    if not apply_patch(repo_dir, patches, [], dry_run=True):
-        patches = normalize_patch(original=patches, repo_dir=repo_dir).normalized
+    patch = SearchReplacePatch.from_string(result.patches)
+
+    # Try to clean up the patch. This can help a lot.
+    if patch is None:
+        normalized_patch = normalize_patch(original=result.patches, repo_dir=repo_dir).normalized
+        patch = SearchReplacePatch.from_string(normalized_patch)
+
+    if patch is None:
+        return None
+    
+    if not patch.apply(repo_dir, dry_run=True):
+        return None
 
     result_dict = {
         "task_id": f"{repo_path.name}/{len(avoid)}",
@@ -231,9 +242,9 @@ def make_feature_request(
         "commit_sha": commit_sha,
         "subject": result.subject,
         "task_description": result.task_description,
-        "patches": patches,
+        # It is much easier for a human reader to read a rendered patch.
+        "patches": patch.render(),
         "reasoning": result.reasoning,
-        "patch_ok": apply_patch(repo_dir, patches, [], dry_run=True),
     }
 
     if not json_output:
@@ -243,9 +254,7 @@ def make_feature_request(
             print(f"Task Description:\n{result_dict['task_description']}\n")
         if result_dict["patches"]:
             print("Patches:")
-            for patch in result_dict["patches"]:
-                print(patch)
-                print()
+            print(result_dict["patches"])
 
     return result_dict
 
@@ -273,7 +282,7 @@ def main_with_args(
     if flex_processing:
         lm_kwargs["service_tier"] = "flex"
         lm_kwargs["allowed_openai_params"] = ["service_tier"]
-        # Default timeout is 10 minutes. Increase morpe?
+        # Default timeout is 10 minutes. Increase more?
 
     lm = dspy.LM(
         model=model,
@@ -302,7 +311,7 @@ def main_with_args(
                 max_input_tokens,
                 num_attempts,
             )
-            if not result["patch_ok"]:
+            if result is None:
                 continue
 
             avoid.append(result["subject"])
