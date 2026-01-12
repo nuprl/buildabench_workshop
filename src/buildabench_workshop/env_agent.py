@@ -95,10 +95,10 @@ def main_with_args(repo: Path, container, tips_path: Path, agent_name: str, outp
     tips_path = tips_path.absolute()
 
     if not container:
-        # Use the original repo path name for container, even if it's a tarball
+        # Use only the filename or directory name for container, not the full path
         if repo_path.is_file():
-            # For tarballs, combine parent directory name and stem
-            name = f"{repo_path.parent.name}#{repo_path.stem}"
+            # For tarballs, strip the extension (e.g., .tar, .tar.gz)
+            name = repo_path.stem
         else:
             name = repo_path.name
         # Normalize the container name using the helper function

@@ -181,10 +181,13 @@ def normalize_reward(args, normalized_result):
     applies to a repository.
     """
     repo_dir = args["repo_dir"]
+    check_patch_applies = args["check_patch_applies"]
     if not normalized_result.normalized:
         return 0.0
     patch = SearchReplacePatch.from_string(normalized_result.normalized)
-    if patch is None or not patch.apply(repo_dir, dry_run=True):
+    if patch is None:
+        return 0.0
+    if check_patch_applies and not patch.apply(repo_dir, dry_run=True):
         return 0.0
     return 1.0
 
@@ -197,6 +200,7 @@ def make_feature_request(
     avoid: List[str],
     max_input_tokens: int,
     num_attempts: int,
+    check_patch_applies: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     The working directory where file operations are performed is repo_dir. This is
@@ -226,13 +230,17 @@ def make_feature_request(
 
     # Try to clean up the patch. This can help a lot.
     if patch is None:
-        normalized_patch = normalize_patch(original=result.patches, repo_dir=repo_dir).normalized
+        normalized_patch = normalize_patch(
+            original=result.patches,
+            repo_dir=repo_dir,
+            check_patch_applies=check_patch_applies,
+        ).normalized
         patch = SearchReplacePatch.from_string(normalized_patch)
 
     if patch is None:
         return None
     
-    if not patch.apply(repo_dir, dry_run=True):
+    if check_patch_applies and not patch.apply(repo_dir, dry_run=True):
         return None
 
     result_dict = {
@@ -270,6 +278,7 @@ def main_with_args(
     max_input_tokens: int,
     num_attempts: int,
     max_tokens: int,
+    check_patch_applies: bool = True,
 ):
     # Configure logging from LOGLEVEL environment variable
     log_level = _get_log_level()
@@ -310,6 +319,7 @@ def main_with_args(
                 avoid,
                 max_input_tokens,
                 num_attempts,
+                check_patch_applies,
             )
             if result is None:
                 continue
@@ -383,6 +393,12 @@ def main():
         dest="max_tokens",
         default=4096,
         help="Maximum number of output tokens to allow for each task",
+    )
+    parser.add_argument(
+        "--check-patch-applies",
+        type=bool,
+        default=True,
+        help="Check that the patch cleanly applies (default: True)",
     )
     args = parser.parse_args()
     main_with_args(**vars(args))
