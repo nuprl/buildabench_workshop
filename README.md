@@ -162,11 +162,9 @@ use to select different models or agents.
    this task may be interesting, but not on the critical path.
 
    At this point, one should read the generated generated tasks. The JSON file
-   is large, and has long, multi-line strings that are difficult to read in a
-   text editor. If you're on Linux,
-   [slopjson](https://github.com/arjunguha/slopjson) is an incredible JSON
-   viewer that's up to the task. Alternatively, run `uv run -m
-   buildabench_workshop.view_tasks tasks.jsonl validated_tasks.jsonl`.
+   is large, and has long, multi-line strings that are difficult to read in
+   a text editor. If you're on Linux, [slopjson](https://github.com/arjunguha/slopjson)
+   is an incredible JSON viewer that's up to the task.
 
 5. Run validate_task to clean up the patches and verify that they
    work:
