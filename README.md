@@ -111,6 +111,8 @@ However, our focus right now is on benchmarking.
 
 The artifacts described below are available in this [Hugging Face dataset](https://huggingface.co/datasets/arjunguha/buildabench-workshop/tree/main).
 
+There is also a [web-based viewer](https://huggingface.co/spaces/arjunguha/buildabench-workshop) that shows several tasks.
+
 ### Build-A-Bench on Rust
 
 So, does it work? It is very hard to determine if the synthesized tasks are any
