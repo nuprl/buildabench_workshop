@@ -186,6 +186,127 @@ use to select different models or agents.
    uv run python3 -m buildabench_workshop.check_validated_tasks validated_tasks.jsonl
    ```
 
+### Resumable Validated Workflow Script
+
+For day-to-day use, there is now a packaged runner that performs the validated
+workflow end-to-end and supports interruption/resume.
+
+Assume your target is already a tarballed git repo:
+
+```bash
+export REPO_TARBALL=scheme_interpreter.tar
+export ENV_TIPS=scheme_env_agent_tips.txt
+export VALIDATE_TIPS=scheme_validate_task_tips.txt
+echo "No tips yet" > "$ENV_TIPS"
+echo "No tips yet" > "$VALIDATE_TIPS"
+```
+
+```bash
+OPENAI_API_BASE=https://litellm.guha-anderson.com \
+OPENAI_API_KEY=$OPENAI_API_KEY \
+uv run python3 -m buildabench_workshop.run_validated_workflow \
+  --env-tips-path "$ENV_TIPS" \
+  --validate-tips-path "$VALIDATE_TIPS" \
+  --agent codex \
+  --model openai/boa \
+  --num-candidates 3 \
+  "$REPO_TARBALL" \
+  "src/scheme_interpreter/*.py" \
+  "tests/*.py"
+```
+
+Resume behavior:
+
+1. If the target container already exists, it does not rerun `env_agent`.
+2. It does not regenerate tasks that are already present in `tasks.jsonl`.
+3. It does not rerun `validate_task` for task IDs already present in `validated_tasks.jsonl`.
+4. It does not rerun `check_validated_tasks` for task IDs already present in `check_results.jsonl`.
+
+Force a fresh run (drop state files and rebuild container):
+
+```bash
+OPENAI_API_BASE=https://litellm.guha-anderson.com \
+OPENAI_API_KEY=$OPENAI_API_KEY \
+uv run python3 -m buildabench_workshop.run_validated_workflow \
+  --force-fresh \
+  --env-tips-path "$ENV_TIPS" \
+  --validate-tips-path "$VALIDATE_TIPS" \
+  --agent codex \
+  --model openai/boa \
+  --num-candidates 3 \
+  "$REPO_TARBALL" \
+  "src/scheme_interpreter/*.py" \
+  "tests/*.py"
+```
+
+### Manual Pipeline (Step-by-Step)
+
+If you want to run the validated workflow manually and inspect each stage:
+
+1. Prepare environment variables:
+
+   ```bash
+   export OPENAI_API_BASE=https://litellm.guha-anderson.com
+   export OPENAI_API_KEY=$OPENAI_API_KEY
+   export REPO_TARBALL=scheme_interpreter.tar
+   export ENV_TIPS=scheme_env_agent_tips.txt
+   export VALIDATE_TIPS=scheme_validate_task_tips.txt
+   export CONTAINER_NAME=env_agent__scheme_interpreter
+   ```
+
+2. Build the execution container only if it does not already exist:
+
+   ```bash
+   podman image exists "$CONTAINER_NAME" || \
+   uv run python3 -m buildabench_workshop.env_agent \
+     --repo "$REPO_TARBALL" \
+     --tips-path "$ENV_TIPS" \
+     --agent codex \
+     --container "$CONTAINER_NAME"
+   ```
+
+3. Synthesize tasks:
+
+   ```bash
+   uv run python3 -m buildabench_workshop.synth_task \
+     --json \
+     --num-candidates 3 \
+     --model openai/boa \
+     "$REPO_TARBALL" \
+     "src/scheme_interpreter/*.py" \
+     "tests/*.py" \
+     > tasks.jsonl
+   ```
+
+4. Validate tasks sequentially:
+
+   ```bash
+   start=$(( $(wc -l < validated_tasks.jsonl 2>/dev/null || echo 0) + 1 ))
+   end=$(wc -l < tasks.jsonl)
+   for i in $(seq "$start" "$end"); do
+     sed -n "${i}p" tasks.jsonl | \
+       uv run python3 -m buildabench_workshop.validate_task \
+         --tips-path "$VALIDATE_TIPS" \
+         --container "$CONTAINER_NAME" \
+         --agent codex \
+         --input-json \
+         --output-json \
+         >> validated_tasks.jsonl
+   done
+   ```
+
+5. Run LLM-free checks:
+
+   ```bash
+   uv run python3 -m buildabench_workshop.check_validated_tasks validated_tasks.jsonl
+   ```
+
+6. Cleanup:
+
+   ```bash
+   podman image rm -f "$CONTAINER_NAME" || true
+   ```
+
 Are the tasks any good? For brevity, I've listed the task subjects below,
 though I did read all the tasks carefully.
 

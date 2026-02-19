@@ -17,10 +17,11 @@ jobs:
   synth-eval:
     runs-on: self-hosted
     env:
+      # This workflow assumes a vLLM server is already running on BOA
+      # and reachable over the 192.168.50/24 VPN.
       OPENAI_MODEL: openai/boa
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-      CONTAINER_NAME: env_agent__scheme_interpreter_${{ github.run_id }}
+      OPENAI_API_KEY: sk-local
+      OPENAI_API_BASE: http://192.168.50.7:8080/v1
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -28,32 +29,56 @@ jobs:
       - name: Add Codex CLI to PATH
         run: echo "/home/ci/codexcli/node_modules/.bin" >> "$GITHUB_PATH"
 
+      - name: Prepare isolated scheme interpreter repo
+        run: |
+          set -euo pipefail
+
+          WORK_REPO="$RUNNER_TEMP/scheme_interpreter_repo_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$WORK_REPO"
+          cp -a test_projects/scheme_interpreter/. "$WORK_REPO/"
+
+          git -C "$WORK_REPO" init
+          git -C "$WORK_REPO" config user.name "CI"
+          git -C "$WORK_REPO" config user.email "ci@example.invalid"
+          git -C "$WORK_REPO" add .
+          git -C "$WORK_REPO" commit -m "Initial scheme interpreter fixture snapshot"
+
+          echo "SCHEME_REPO=$WORK_REPO" >> "$GITHUB_ENV"
+          echo "TASKS_JSONL=$RUNNER_TEMP/ci_tasks_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.jsonl" >> "$GITHUB_ENV"
+          echo "VALIDATED_JSONL=$RUNNER_TEMP/ci_validated_tasks_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}.jsonl" >> "$GITHUB_ENV"
+          echo "CONTAINER_NAME=env_agent__scheme_interpreter_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
       - name: Build container via env_agent
         run: |
           uv run python3 -m buildabench_workshop.env_agent \
-            --repo test_projects/scheme_interpreter \
-            --tips-path test_projects/scheme_interpreter/env_agent_tips.txt \
+            --repo "$SCHEME_REPO" \
+            --tips-path "$SCHEME_REPO/env_agent_tips.txt" \
             --agent codex \
             --container "$CONTAINER_NAME"
+
+      - name: Verify BOA vLLM endpoint
+        run: |
+          curl -fsS "$OPENAI_API_BASE/models"
 
       - name: Synthesize 3 tasks
         run: |
           uv run python3 -m buildabench_workshop.synth_task \
             --json \
             --num-candidates 3 \
-            --model openai/boa \
-            test_projects/scheme_interpreter \
+            --model "$OPENAI_MODEL" \
+            "$SCHEME_REPO" \
             "src/scheme_interpreter/*.py" \
             "tests/*.py" \
-            > test_projects/scheme_interpreter/ci_tasks.jsonl
+            > "$TASKS_JSONL"
 
       - name: Print synthesized tasks
         run: |
           uv run python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
+          tasks_path = Path(os.environ["TASKS_JSONL"])
           for line in tasks_path.read_text().splitlines():
             if not line.strip():
               continue
@@ -77,8 +102,8 @@ jobs:
           import os
           from pathlib import Path
 
-          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
-          validated_path = Path("test_projects/scheme_interpreter/ci_validated_tasks.jsonl")
+          tasks_path = Path(os.environ["TASKS_JSONL"])
+          validated_path = Path(os.environ["VALIDATED_JSONL"])
           container = os.environ["CONTAINER_NAME"]
           with validated_path.open("w") as out:
             for line in tasks_path.read_text().splitlines():
@@ -97,10 +122,11 @@ jobs:
           import json
           import subprocess
           import sys
+          import os
           from pathlib import Path
 
-          tasks_path = Path("test_projects/scheme_interpreter/ci_tasks.jsonl")
-          validated_path = Path("test_projects/scheme_interpreter/ci_validated_tasks.jsonl")
+          tasks_path = Path(os.environ["TASKS_JSONL"])
+          validated_path = Path(os.environ["VALIDATED_JSONL"])
 
           failures = 0
           passes = 0
@@ -144,7 +170,9 @@ jobs:
             sys.exit(1)
           PY
 
-      - name: Cleanup container
+      - name: Cleanup container and isolated repo
         if: always()
         run: |
           podman image rm -f "$CONTAINER_NAME" || true
+          rm -rf "${SCHEME_REPO:-}" || true
+          rm -f "${TASKS_JSONL:-}" "${VALIDATED_JSONL:-}" || true
