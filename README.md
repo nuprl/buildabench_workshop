@@ -143,16 +143,17 @@ use to select different models or agents.
 3. Run env_agent to create the execution environment:
 
    ```bash
-   uv run python3 -m buildabench_workshop.env_agent \
-       --tips-file rust_validate_task_tips.txt \
+   uv run -m buildabench_workshop.env_agent \
+       --tips-path rust_env_agent_tips.txt \
        --repo ilvm.tar \
+       --agent codex \
        --output-json >> envs.jsonl
    ```
 
 4. Run synth_task to create the tasks:
 
    ```bash
-   uv run python3 -m buildabench_workshop.synth_task \
+   uv run -m buildabench_workshop.synth_task \
       --json \
       --num-candidates 10 \
       --flex-processing ilvm.tar "src/*.rs" >> tasks.jsonl
@@ -173,7 +174,7 @@ use to select different models or agents.
 
    ```bash
     parallel -j 1 --progress --bar \
-        'sed -n "{}p" tasks.jsonl | python3 -m buildabench_workshop.validate_task --tips-path rust_validate_task_tips.txt --agent codex --input-json --output-json' \
+        'sed -n "{}p" tasks.jsonl | uv run -m buildabench_workshop.validate_task --tips-path rust_validate_task_tips.txt --agent codex --input-json --output-json' \
         ::: `seq 10` >> validated_tasks.jsonl
 
     ```
@@ -183,7 +184,7 @@ use to select different models or agents.
 6. Finally, run an LLM-free validation step:
 
    ```bash
-   uv run python3 -m buildabench_workshop.check_validated_tasks validated_tasks.jsonl
+   uv run -m buildabench_workshop.check_validated_tasks validated_tasks.jsonl
    ```
 
 Are the tasks any good? For brevity, I've listed the task subjects below,
@@ -277,33 +278,7 @@ I had an earlier run where Composer-1 was able complete the first task successfu
 is not impossible. I started looking at the failures, and they seem to be typical flaws
 like hallucinated method names, and not due to underspecification.
 
-## Workflow Script
 
-To run Build-A-Bench end-to-end, we have a workflow script that supports resuming interrupted work.
-
-Assume your target is already a tarballed git repo, and the `$OPENAI_API_BASE` and
-`$OPENAI_API_KEY` environment variables are set:
-
-```bash
-export ENV_TIPS=scheme_env_agent_tips.txt
-export VALIDATE_TIPS=scheme_validate_task_tips.txt
-echo "No tips yet" > "$ENV_TIPS"
-echo "No tips yet" > "$VALIDATE_TIPS"
-```
-
-```bash
-uv run python3 -m buildabench_workshop.run_validated_workflow \
-  --env-tips-path "$ENV_TIPS" \
-  --validate-tips-path "$VALIDATE_TIPS" \
-  --agent codex \
-  --model openai/boa \
-  --num-candidates 3 \
-  "$REPO_TARBALL" \
-  $GLOB_PATTERN ...
-```
-
-The glob pattern is language dependent. For example, for Julia you will want to use `**/*.jl` or `src/*.jl`, where
-the latter narrows the tool to avoid tests. The globs are standard Python globs.
 
 ## Acknowledgements
 

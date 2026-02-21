@@ -288,6 +288,17 @@ def main_with_args(
 
     lm_kwargs = {}
 
+    # DSPy enforces stricter defaults for OpenAI reasoning models.
+    if model.startswith("openai/gpt-5"):
+        if max_tokens is not None and max_tokens < 16000:
+            logging.info(
+                "Increasing --max-tokens from %s to 16000 for %s",
+                max_tokens,
+                model,
+            )
+            max_tokens = 16000
+        lm_kwargs["temperature"] = 1.0
+
     if flex_processing:
         lm_kwargs["service_tier"] = "flex"
         lm_kwargs["allowed_openai_params"] = ["service_tier"]

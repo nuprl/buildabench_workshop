@@ -1,4 +1,23 @@
-# AGENTS.md
+## Creating A Benchmark
+
+To create benchmark tasks for a repositoy end-to-end, use
+
+```bash
+uv run -m buildabench_workshop.benchmark_workflow
+```
+
+Use `--help` to see all the options. Tthe script can take several minutes
+to run. If anything breaks, do not try to workaround or debug the issue
+unless explicitly asked to do so.
+
+
+The most common bit of preprocessing you may need to do is determine the glob
+patterns argument to `benchmark_workflow.` To do this, either clone or browse
+the repository yourself, and based on the primary programming langauge,
+construct a glob patterns that include the sources files but excludes the test
+files, and use these patterns as arguments to the `benchmark_workflow` script.
+If you clone the repository, you should remove your clone after you're done,
+and let the script create its own clone.
 
 ## Using a Boa-Hosted Model
 
