@@ -57,6 +57,7 @@ These are the steps we follow:
 """
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -140,6 +141,18 @@ def clone_and_tar(url: str, output_tar: Path, ref: str | None = None) -> None:
         )
 
 
+def _read_jsonl_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rows.append(json.loads(line))
+    return rows
+
+
 def main_with_args(
     repo: str,
     patterns: list[str],
@@ -150,6 +163,7 @@ def main_with_args(
     env_tips_path: Path | None,
     validate_tips_path: Path | None,
     num_candidates: int,
+    extra: str,
     ref: str | None = None,
 ) -> int:
     gh = parse_github_url(repo)
@@ -215,40 +229,70 @@ def main_with_args(
         print(f"SKIP env_agent: container {container} already exists", file=sys.stderr)
 
     tasks_jsonl = output_dir / "tasks.jsonl"
-    if not tasks_jsonl.exists():
-        print("Running synth_task", file=sys.stderr)
-        with tasks_jsonl.open("w") as f:
+    existing_tasks = _read_jsonl_rows(tasks_jsonl)
+    existing_subjects = [
+        task["subject"] for task in existing_tasks if isinstance(task.get("subject"), str)
+    ]
+    tasks_to_generate = max(0, num_candidates - len(existing_tasks))
+    if tasks_to_generate > 0:
+        print(
+            f"Running synth_task to generate {tasks_to_generate} additional tasks",
+            file=sys.stderr,
+        )
+        synth_task_cmd = [
+            sys.executable,
+            "-m",
+            "buildabench_workshop.synth_task",
+            "--json",
+            "--num-candidates",
+            str(tasks_to_generate),
+            "--model",
+            model,
+        ]
+        if existing_subjects:
+            synth_task_cmd.extend(["--avoid", *existing_subjects])
+        if extra:
+            synth_task_cmd.extend(["--extra", extra])
+        synth_task_cmd.extend([str(repo_tar), *patterns])
+        with tasks_jsonl.open("a") as f:
             result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "buildabench_workshop.synth_task",
-                    "--json",
-                    "--num-candidates",
-                    str(num_candidates),
-                    "--model",
-                    model,
-                    str(repo_tar),
-                    *patterns,
-                ],
+                synth_task_cmd,
                 cwd=project_root,
                 stdout=f,
             )
         if result.returncode != 0:
             return result.returncode
     else:
-        print(f"SKIP synth_task: {tasks_jsonl} already exists", file=sys.stderr)
+        print(
+            f"SKIP synth_task: already have {len(existing_tasks)} tasks (target {num_candidates})",
+            file=sys.stderr,
+        )
 
     validated_jsonl = output_dir / "validated_tasks.jsonl"
-    if not validated_jsonl.exists():
-        tasks = tasks_jsonl.read_text().strip().split("\n")
-        tasks = [t for t in tasks if t.strip()]
-        if not tasks:
-            print("Error: no tasks to validate", file=sys.stderr)
-            return 1
-        print(f"Running validate_task for {len(tasks)} tasks", file=sys.stderr)
-        with validated_jsonl.open("w") as outf:
-            for line in tasks:
+    task_lines = [t for t in tasks_jsonl.read_text().splitlines() if t.strip()]
+    if not task_lines:
+        print("Error: no tasks to validate", file=sys.stderr)
+        return 1
+
+    validated_rows = _read_jsonl_rows(validated_jsonl)
+    validated_ids = {
+        row["task_id"] for row in validated_rows if isinstance(row.get("task_id"), str)
+    }
+    tasks_to_validate = []
+    for line in task_lines:
+        task = json.loads(line)
+        task_id = task.get("task_id")
+        if isinstance(task_id, str) and task_id not in validated_ids:
+            tasks_to_validate.append(line)
+
+    if tasks_to_validate:
+        print(
+            f"Running validate_task for {len(tasks_to_validate)} tasks",
+            file=sys.stderr,
+        )
+        mode = "a" if validated_jsonl.exists() else "w"
+        with validated_jsonl.open(mode) as outf:
+            for line in tasks_to_validate:
                 validate_single_task(
                     line,
                     outf,
@@ -259,7 +303,7 @@ def main_with_args(
                 )
     else:
         print(
-            f"SKIP validate_task: {validated_jsonl} already exists",
+            "SKIP validate_task: all tasks already validated",
             file=sys.stderr,
         )
 
@@ -321,6 +365,11 @@ def main() -> int:
         type=int,
         default=10,
         help="Number of tasks to synthesize (default: 1)",
+    )
+    parser.add_argument(
+        "--extra",
+        default="",
+        help="Additional directions for the task synthesis signature",
     )
     parser.add_argument(
         "--ref",

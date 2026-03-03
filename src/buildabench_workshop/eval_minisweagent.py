@@ -281,7 +281,15 @@ def run_minisweagent(
         timeout_seconds=timeout_seconds,
         max_output_size=2 * 1024 * 1024,
     )
-    return result.exit_code, result.stdout + result.stderr, result.timeout, may_read(trajectory_path)
+    trajectory_path_str: str | None = None
+    if trajectory_path.exists():
+        trajectory_path_str = str(trajectory_path)
+    return (
+        result.exit_code,
+        result.stdout + result.stderr,
+        result.timeout,
+        trajectory_path_str,
+    )
 
 
 def run_tests_in_container(
@@ -334,6 +342,7 @@ def evaluate_one_task(
         "agent_timed_out": None,
         "agent_log": None,
         "agent_trajectory": None,
+        "agent_trajectory_path": None,
         "container_exit_code": None,
         "container_timed_out": None,
         "container_log": None,
@@ -414,7 +423,12 @@ def evaluate_one_task(
             check=False,
         )
 
-        agent_exit, agent_log, agent_timed_out, trajectory = run_minisweagent(
+        (
+            agent_exit,
+            agent_log,
+            agent_timed_out,
+            trajectory_path,
+        ) = run_minisweagent(
             repo_dir=repo_dir,
             image=mini_container,
             model=model,
@@ -426,7 +440,9 @@ def evaluate_one_task(
         result["agent_exit_code"] = agent_exit
         result["agent_log"] = agent_log
         result["agent_timed_out"] = agent_timed_out
-        result["agent_trajectory"] = trajectory
+        # Keep the full trajectory on disk and store its path instead of loading content.
+        result["agent_trajectory"] = trajectory_path
+        result["agent_trajectory_path"] = trajectory_path
 
         tests_exit, tests_stderr = apply_git_diff(repo_dir, tests_diff)
         result["tests_diff_apply_exit_code"] = tests_exit
@@ -592,21 +608,16 @@ def _status_cell(row: dict | None) -> str:
     """
     if row is None:
         return "MISSING"
-    status = str(row.get("status", "unknown")).upper()
-    detail = row.get("skip_reason") or row.get("error")
-    agent_exit = row.get("agent_exit_code")
-    cont_exit = row.get("container_exit_code")
-    parts = [status]
-    if detail:
-        parts.append(str(detail))
-    codes = []
-    if agent_exit is not None:
-        codes.append(f"a={agent_exit}")
-    if cont_exit is not None:
-        codes.append(f"c={cont_exit}")
-    if codes:
-        parts.append(",".join(codes))
-    return "<br>".join(_escape_md(p) for p in parts)
+    status = str(row.get("status", "unknown")).lower()
+    if status == "pass":
+        return "PASS"
+    if status == "fail":
+        return "FAIL"
+    if status == "error":
+        return "ERROR"
+    if status == "skipped":
+        return "SKIPPED"
+    return "ERROR"
 
 
 def _collect_results_by_task(results_dir: Path) -> dict[str, dict]:
@@ -664,17 +675,11 @@ def cmd_summary(args) -> int:
     print()
     print("## Per-Task Results")
     print()
-    headers = ["Task ID", "Subject"] + labels
+    headers = ["Task ID"] + labels
     print("| " + " | ".join(headers) + " |")
     print("|" + "|".join(["---"] * len(headers)) + "|")
     for task_id in filtered_task_ids:
-        subject = ""
-        for result_map in all_results:
-            row = result_map.get(task_id)
-            if isinstance(row, dict) and isinstance(row.get("subject"), str):
-                subject = row["subject"]
-                break
-        cells = [_escape_md(task_id), _escape_md(subject)] + [
+        cells = [_escape_md(task_id)] + [
             _status_cell(result_map.get(task_id)) for result_map in all_results
         ]
         print("| " + " | ".join(cells) + " |")

@@ -18,6 +18,13 @@ import os
 from .repolib import tarball_or_repo, get_commit_sha
 from .search_replace_patch import SearchReplacePatch
 
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    """Return True for GPT-5 reasoning models with or without provider prefix."""
+    model_name = model.split("/", 1)[-1]
+    return model_name.startswith("gpt-5")
+
+
 def _get_log_level() -> int:
     """
     Determine log level from LOGLEVEL environment variable.
@@ -127,10 +134,13 @@ class MakeFeatureRequest(dspy.Signature):
     Finally, I will give you a list of subjects that I already have interview
     questions for. Pick a subject that is not at all similar to the subjects in the
     list.
+
+    In addition, you MUST follow the extra directions.
     """
 
     code: str = dspy.InputField()
     avoid: str = dspy.InputField(description="List of existing subjects to avoid")
+    extra: str = dspy.InputField(description="Additional directions that must be followed")
     subject: str = dspy.OutputField()
     task_description: str = dspy.OutputField(
         description="The description for the interview. It should sound like the feature never existed, so do not mention that we are asking for it to be reimplemented. Give at least one test case that should pass when the feature is implemented correctly."
@@ -198,6 +208,7 @@ def make_feature_request(
     matching_files: List[Path],
     json_output: bool,
     avoid: List[str],
+    extra: str,
     max_input_tokens: int,
     num_attempts: int,
     check_patch_applies: bool = True,
@@ -225,7 +236,11 @@ def make_feature_request(
         )
         formatted_code = formatted_code[: (max_input_tokens * 3)]
 
-    result = make_feature_request_cot(code=formatted_code, avoid=";".join(avoid))
+    result = make_feature_request_cot(
+        code=formatted_code,
+        avoid=";".join(avoid),
+        extra=extra,
+    )
     patch = SearchReplacePatch.from_string(result.patches)
 
     # Try to clean up the patch. This can help a lot.
@@ -272,6 +287,7 @@ def main_with_args(
     patterns: List[str],
     json_output: bool,
     avoid: List[str],
+    extra: str,
     num_candidates: int,
     flex_processing: bool,
     model: str,
@@ -289,7 +305,7 @@ def main_with_args(
     lm_kwargs = {}
 
     # DSPy enforces stricter defaults for OpenAI reasoning models.
-    if model.startswith("openai/gpt-5"):
+    if _is_openai_reasoning_model(model):
         if max_tokens is not None and max_tokens < 16000:
             logging.info(
                 "Increasing --max-tokens from %s to 16000 for %s",
@@ -328,6 +344,7 @@ def main_with_args(
                 matching_files,
                 json_output,
                 avoid,
+                extra,
                 max_input_tokens,
                 num_attempts,
                 check_patch_applies,
@@ -378,6 +395,11 @@ def main():
         default=[],
         action="extend",
         help="List of existing subjects to avoid",
+    )
+    parser.add_argument(
+        "--extra",
+        default="",
+        help="Additional directions for the task synthesis signature",
     )
     parser.add_argument(
         "--num-candidates",

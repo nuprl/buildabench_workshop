@@ -47,8 +47,14 @@ container must run the code on the volume mounted to /repo. So, do not copy the
 full source code into the container.
 
 The project may have test-only dependencies that are not installed by default.
-so, ensure you install them during the build stage, since network access is
-disabled during podman run.
+So, ensure you install all test/development dependencies during the build
+stage, since network access is disabled during podman run.
+
+Important: install both root/runtime dependencies and test dependencies. For
+example, if there is a separate test manifest/environment, 
+install that environment during image build too.
+The final `podman run --network none ...` step must be able to execute the
+test command without fetching anything from the network.
 
 You should build and run the container to verify that it is behaving as
 expected. To run. use exactly the podman run command shown above, but apply a 5
